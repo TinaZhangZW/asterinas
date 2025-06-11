@@ -44,9 +44,13 @@ INITRAMFS_ALL_DIRS := \
 	$(INITRAMFS)/benchmark \
 	$(INITRAMFS)/etc/X11 \
 	$(INITRAMFS)/etc/dbus-1 \
+	$(INITRAMFS)/etc/xdg \
+	$(INITRAMFS)/etc/fonts \
 	$(INITRAMFS)/usr/lib \
 	$(INITRAMFS)/usr/lib/x86_64-linux-gnu \
 	$(INITRAMFS)/usr/lib/x86_64-linux-gnu/dri \
+	$(INITRAMFS)/usr/libexec \
+	$(INITRAMFS)/.config \
 	$(INITRAMFS_EMPTY_DIRS)
 
 # Include test as target if BENCHMARK is not set.
@@ -165,6 +169,8 @@ $(INITRAMFS)/lib/x86_64-linux-gnu: | $(VDSO_LIB)
 	@cp -L /lib/x86_64-linux-gnu/libXcursor.so.1 $@
 	@cp -L /lib/x86_64-linux-gnu/libXcomposite.so.1 $@
 	@cp -L /lib/x86_64-linux-gnu/libXdamage.so.1 $@
+	@cp -L /lib/x86_64-linux-gnu/libXRes.so.1 $@
+	@cp -L /lib/x86_64-linux-gnu/libxcb-util.so.1 $@
 	@#required for GTK3
 	@cp -L /lib/x86_64-linux-gnu/libgdk-3.so.0 $@
 	@cp -L /lib/x86_64-linux-gnu/libgtk-3.so.0 $@
@@ -203,6 +209,11 @@ $(INITRAMFS)/lib/x86_64-linux-gnu: | $(VDSO_LIB)
 	@cp -L /lib/x86_64-linux-gnu/libunwind-ptrace.so.0 $@
 	@cp -L /lib/x86_64-linux-gnu/libunwind-x86_64.so.8 $@
 	@cp -L /lib/x86_64-linux-gnu/libunwind.so.8 $@
+	@#required for xfce
+	@cp -L /lib/x86_64-linux-gnu/libxfce4ui-2.so.0 $@
+	@cp -L /lib/x86_64-linux-gnu/libxfce4util.so.7 $@
+	@cp -L /lib/x86_64-linux-gnu/libxfconf-0.so.3 $@
+
 
 $(VDSO_LIB): | $(VDSO_DIR) $(BINARY_CACHE_DIR)/vdso64.so
 	@# TODO: use a custom compiled vdso.so file in the future.
@@ -226,6 +237,7 @@ $(INITRAMFS)/etc:
 
 $(INITRAMFS)/var/run: | $(INITRAMFS)/run
 	@rm -rf $@
+	@mkdir -p $(dir $@)
 	@ln -sf ../run $@
 
 $(INITRAMFS)/run:
@@ -264,7 +276,7 @@ $(INITRAMFS)/usr/bin: | $(INITRAMFS)/bin
 	@cp /usr/bin/xlogo $@
 	@cp /usr/bin/xmessage $@
 	@echo "#!/bin/sh" > $@/run_xorg.sh
-	@echo "./usr/bin/Xorg :0 -modulepath /usr/lib/xorg/modules -config /etc/X11/xorg.conf.d/10-fbdev.conf -logverbose 6 -logfile ~/xorg_debug.log -novtswitch -keeptty -keyboard "keyboard" -pointer "mouse0" &" >> $@/run_xorg.sh
+	@echo "/usr/bin/Xorg :0 -modulepath /usr/lib/xorg/modules -config /etc/X11/xorg.conf.d/10-fbdev.conf -logverbose 6 -logfile ~/xorg_debug.log -novtswitch -keeptty -keyboard "keyboard" -pointer "mouse0" &" >> $@/run_xorg.sh
 	@chmod +x $@/run_xorg.sh
 	@cp /root/ubuntu/dbus/dbus-1.12.20/setup_dbus.sh $@/setup_dbus.sh
 	@echo "/usr/bin/dbus-send --system --dest=org.freedesktop.DBus --print-reply /org/freedesktop/DBus org.freedesktop.DBus.ListNames" > $@/run_dbus-send.sh
@@ -279,6 +291,10 @@ $(INITRAMFS)/usr/bin: | $(INITRAMFS)/bin
 	@cp /usr/bin/gtk3-demo $@
 	@cp /root/ubuntu/tools/hello-gtk/hello-gtk $@
 	@cp /root/ubuntu/tools/mknod_dev/setup_dev.sh $@
+	@#required for xfce4
+	@cp /root/ubuntu/xfce/xfwm4-4.16.1/src/xfwm4 $@
+	@cp /root/ubuntu/xfce/xfdesktop4-4.16.0/src/xfdesktop $@
+	@cp /root/ubuntu/xfce/xfconf-4.16.0/xfconfd/xfconfd $@
 	@cp /usr/bin/strace $@
 
 $(INITRAMFS)/usr/local:
@@ -286,6 +302,8 @@ $(INITRAMFS)/usr/local:
 	@cp -r /usr/local/nginx $@
 	@cp -r /usr/local/redis $@
 	@cp -r /usr/local/memcached $@
+	@mkdir -p $@/share/xfwm4/
+	@cp -r /root/ubuntu/xfce/xfwm4-4.16.1/defaults/defaults $@/share/xfwm4/defaults
 
 $(INITRAMFS)/usr/share:
 	@mkdir -p $@
@@ -298,10 +316,24 @@ $(INITRAMFS)/usr/share:
 	@cp -r /usr/share/glib-2.0/schemas/* $@/glib-2.0/schemas/
 	@mkdir -p $@/themes/Default/gtk-3.0
 	@cp -r /usr/share/themes/Default/gtk-3.0/* $@/themes/Default/gtk-3.0/
+	@mkdir -p $@/themes/Greybird
+	@cp -r /usr/share/themes/Greybird/* $@/themes/Greybird/
 	@mkdir -p $@/icons/Adwaita
 	@cp -r /usr/share/icons/Adwaita/* $@/icons/Adwaita/
+	@mkdir -p $@/themes/Adwaita
+	@cp -r /usr/share/themes/Adwaita/* $@/themes/Adwaita/
+	@mkdir -p $@/themes/Yaru
+	@cp -r /usr/share/themes/Yaru/* $@/themes/Yaru/
+	@mkdir -p $@/icons/Yaru
+	@cp -r /usr/share/icons/Yaru/* $@/icons/Yaru/
+	@mkdir -p $@/fonts
+	@cp -r /usr/share/fonts/* $@/fonts/
+	@mkdir -p $@/icons/hicolor
+	@cp -r /usr/share/icons/hicolor/* $@/icons/hicolor/
 	@cp -r /usr/share/locale $@
 	@cp -r /usr/share/gtk-3.0 $@
+	@cp -r /usr/share/dbus-1 $@
+	@cp -r /usr/share/mime $@
 
 $(INITRAMFS)/etc/X11:
 	@mkdir -p $@
@@ -314,15 +346,42 @@ $(INITRAMFS)/etc/dbus-1:
 	@cp -r /root/ubuntu/dbus/dbus-1.12.20/bus/legacy-config/system.conf $@
 	@cp -r /root/ubuntu/dbus/dbus-1.12.20/bus/session.conf $@
 
+$(INITRAMFS)/etc/xdg:
+	@mkdir -p $@
+	@cp -r /etc/xdg/xfce4 $@
+
+$(INITRAMFS)/etc/fonts:
+	@mkdir -p $@
+	@cp -r /etc/fonts/* $@
+
 $(INITRAMFS)/usr/lib:
 	@mkdir -p $@
 	@cp -r /usr/lib/xorg $@
+
+$(INITRAMFS)/usr/libexec:
+	@mkdir -p $@
+	@cp /usr/libexec/at-spi-bus-launcher $@
+
+$(INITRAMFS)/.config:
+	@mkdir -p $@
+	@mkdir -p $@/gtk-3.0
+	@cp /root/ubuntu/gtk+3.0-3.24.33/debian/settings.ini $@/gtk-3.0/settings.ini
+
 
 $(INITRAMFS)/usr/lib/x86_64-linux-gnu:
 	@mkdir -p $@
 	@cp -L /usr/lib/x86_64-linux-gnu/libxkbfile.so.1 $@
 	@cp -L /usr/lib/x86_64-linux-gnu/libglapi.so.0 $@
+	@mkdir -p $@/gtk-3.0
 	@cp -r /usr/lib/x86_64-linux-gnu/gtk-3.0/* $@/gtk-3.0/
+	@#required for xfce4
+	@cp -L /usr/lib/x86_64-linux-gnu/libxfce4kbd-private-3.so.0 $@
+	@cp -L /usr/lib/x86_64-linux-gnu/libstartup-notification-1.so.0 $@
+	@cp -L /usr/lib/x86_64-linux-gnu/libgobject-2.0.so.0 $@
+	@cp -L /usr/lib/x86_64-linux-gnu/libwnck-3.so.0 $@
+	@cp -L /usr/lib/x86_64-linux-gnu/libexo-2.so.0 $@
+	@mkdir -p $@/gdk-pixbuf-2.0
+	@cp -r /usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/* $@/gdk-pixbuf-2.0/
 
 $(INITRAMFS)/usr/lib/x86_64-linux-gnu/dri:
 	@mkdir -p $@
@@ -388,6 +447,9 @@ $(INITRAMFS_IMAGE): $(INITRAMFS_FILELIST)
 .PHONY: $(INITRAMFS_FILELIST)
 # If the BUILD_SYSCALL_TEST variable is set, we should depend on the
 # sub make output to do incremental building.
+# $(INITRAMFS_FILELIST):
+#     @echo "Updating INITRAMFS_FILELIST..."
+#     @(cd $(INITRAMFS); find . -printf "%T@ %p\n") > $(INITRAMFS_FILELIST)
 ifeq ($(BUILD_SYSCALL_TEST), 1)
 $(INITRAMFS_FILELIST): | $(INITRAMFS_ALL_DIRS) $(SYSCALL_TEST_DIR)
 else
@@ -405,6 +467,9 @@ $(EXFAT_IMAGE):
 
 .PHONY: build
 build: $(INITRAMFS_IMAGE) $(EXT2_IMAGE) $(EXFAT_IMAGE)
+
+.PHONY: build_ramdisk
+build_ramdisk: $(INITRAMFS_IMAGE)
 
 .PHONY: format
 format:

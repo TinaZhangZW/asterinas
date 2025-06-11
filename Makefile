@@ -215,7 +215,7 @@ test_osdk:
 
 .PHONY: initramfs
 initramfs:
-	@$(MAKE) --no-print-directory -C test
+	@$(MAKE) -B --no-print-directory -C test
 
 .PHONY: build
 build: initramfs $(CARGO_OSDK)
