@@ -291,6 +291,7 @@ $(INITRAMFS)/usr/bin: | $(INITRAMFS)/bin
 	@cp /usr/bin/gtk3-demo $@
 	@cp /root/ubuntu/tools/hello-gtk/hello-gtk $@
 	@cp /root/ubuntu/tools/mknod_dev/setup_dev.sh $@
+	@cp /root/ubuntu/dbus/dbus-1.12.20/run_hello_gtk.sh $@
 	@#required for xfce4
 	@cp /root/ubuntu/xfce/xfwm4-4.16.1/src/xfwm4 $@
 	@cp /root/ubuntu/xfce/xfdesktop4-4.16.0/src/xfdesktop $@
