@@ -213,6 +213,9 @@ $(INITRAMFS)/lib/x86_64-linux-gnu: | $(VDSO_LIB)
 	@cp -L /lib/x86_64-linux-gnu/libxfce4ui-2.so.0 $@
 	@cp -L /lib/x86_64-linux-gnu/libxfce4util.so.7 $@
 	@cp -L /lib/x86_64-linux-gnu/libxfconf-0.so.3 $@
+	@#required for dbus
+	@cp -L /lib/x86_64-linux-gnu/libaudit.so.1 $@
+	@cp -L /lib/x86_64-linux-gnu/libcap-ng.so.0 $@
 
 
 $(VDSO_LIB): | $(VDSO_DIR) $(BINARY_CACHE_DIR)/vdso64.so
@@ -262,9 +265,9 @@ $(INITRAMFS)/sbin:
 $(INITRAMFS)/usr/bin: | $(INITRAMFS)/bin
 	@mkdir -p $@
 	@cp /usr/bin/busybox $@
-	@cp /usr/bin/Xvfb $@
-	@cp /usr/bin/Xorg $@
-	@cp /usr/bin/gtf $@
+	@cp /user-de/xorg/installed_dir/bin/Xvfb $@
+	@cp /user-de/xorg/installed_dir/bin/Xorg $@
+	@cp /user-de/xorg/installed_dir/bin/gtf $@
 	@cp /usr/bin/setxkbmap $@
 	@cp /usr/bin/xkbbell $@
 	@cp /usr/bin/xkbcomp $@
@@ -289,13 +292,13 @@ $(INITRAMFS)/usr/bin: | $(INITRAMFS)/bin
 	@cp /root/ubuntu/dbus/dbus-1.12.20/tools/.libs/dbus-monitor $@/dbus-monitor
 	@cp /root/ubuntu/dbus/dbus-1.12.20/tools/dbus-cleanup-sockets $@/dbus-cleanup-sockets
 	@cp /usr/bin/gtk3-demo $@
-	@cp /root/ubuntu/tools/hello-gtk/hello-gtk $@
-	@cp /root/ubuntu/tools/mknod_dev/setup_dev.sh $@
-	@cp /root/ubuntu/dbus/dbus-1.12.20/run_hello_gtk.sh $@
+	@cp /user-de/gtk/hello-gtk/hello-gtk $@
+	@cp /user-de/gtk/run_hello_gtk.sh $@
+	@cp /user-de/tools/setup_dev.sh $@
 	@#required for xfce4
-	@cp /root/ubuntu/xfce/xfwm4-4.16.1/src/xfwm4 $@
-	@cp /root/ubuntu/xfce/xfdesktop4-4.16.0/src/xfdesktop $@
-	@cp /root/ubuntu/xfce/xfconf-4.16.0/xfconfd/xfconfd $@
+	@cp /user-de/xfce/xfwm4 $@
+	@cp /user-de/xfce/xfdesktop $@
+	@cp /user-de/xfce/xfconfd $@
 	@cp /usr/bin/strace $@
 
 $(INITRAMFS)/usr/local:
@@ -304,7 +307,7 @@ $(INITRAMFS)/usr/local:
 	@cp -r /usr/local/redis $@
 	@cp -r /usr/local/memcached $@
 	@mkdir -p $@/share/xfwm4/
-	@cp -r /root/ubuntu/xfce/xfwm4-4.16.1/defaults/defaults $@/share/xfwm4/defaults
+	@cp -r /user-de/xfce/defaults $@/share/xfwm4/defaults
 
 $(INITRAMFS)/usr/share:
 	@mkdir -p $@
@@ -358,6 +361,7 @@ $(INITRAMFS)/etc/fonts:
 $(INITRAMFS)/usr/lib:
 	@mkdir -p $@
 	@cp -r /usr/lib/xorg $@
+	@cp -r /user-de/xorg/installed_dir/lib/x86_64-linux-gnu/xorg/modules/ $@/xorg/modules/
 
 $(INITRAMFS)/usr/libexec:
 	@mkdir -p $@
@@ -366,7 +370,7 @@ $(INITRAMFS)/usr/libexec:
 $(INITRAMFS)/.config:
 	@mkdir -p $@
 	@mkdir -p $@/gtk-3.0
-	@cp /root/ubuntu/gtk+3.0-3.24.33/debian/settings.ini $@/gtk-3.0/settings.ini
+	@cp /user-de/gtk/gtk+3.0-3.24.33/debian/settings.ini $@/gtk-3.0/settings.ini
 
 
 $(INITRAMFS)/usr/lib/x86_64-linux-gnu:
