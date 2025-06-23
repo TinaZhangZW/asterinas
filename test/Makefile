@@ -294,6 +294,8 @@ $(INITRAMFS)/usr/bin: | $(INITRAMFS)/bin
 	@cp /usr/bin/gtk3-demo $@
 	@cp /user-de/gtk/hello-gtk/hello-gtk $@
 	@cp /user-de/gtk/run_hello_gtk.sh $@
+	# Add a new file in user-de.
+	@cp /user-de/gtk/run_gtk_demo.sh $@
 	@cp /user-de/tools/setup_dev.sh $@
 	@#required for xfce4
 	@cp /user-de/xfce/xfwm4 $@
