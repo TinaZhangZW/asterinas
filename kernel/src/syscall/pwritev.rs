@@ -13,7 +13,17 @@ pub fn sys_writev(
     io_vec_count: usize,
     ctx: &Context,
 ) -> Result<SyscallReturn> {
-    let res = do_sys_writev(fd, io_vec_ptr, io_vec_count, ctx)?;
+    // let res = do_sys_writev(fd, io_vec_ptr, io_vec_count, ctx)?;
+    let res = match do_sys_writev(fd, io_vec_ptr, io_vec_count, ctx) {
+        Ok(val) => val,
+        Err(err) => {
+            return Err(err);
+        }
+    };
+    debug!(
+        "sys_writev: fd = {}, io_vec_ptr = 0x{:x}, io_vec_count = {}, res = {}",
+        fd, io_vec_ptr, io_vec_count, res
+    );
     Ok(SyscallReturn::Return(res as _))
 }
 
@@ -119,7 +129,8 @@ fn do_sys_writev(
     ctx: &Context,
 ) -> Result<usize> {
     debug!(
-        "fd = {}, io_vec_ptr = 0x{:x}, io_vec_counter = 0x{:x}",
+        // "fd = {}, io_vec_ptr = 0x{:x}, io_vec_counter = 0x{:x}",
+        "writev: fd = {}, io_vec_ptr = 0x{:x}, io_vec_counter = 0x{:x}",
         fd, io_vec_ptr, io_vec_count
     );
 
@@ -129,7 +140,18 @@ fn do_sys_writev(
     let mut total_len = 0;
 
     let user_space = ctx.user_space();
-    let mut reader_array = VmReaderArray::from_user_io_vecs(&user_space, io_vec_ptr, io_vec_count)?;
+    // let mut reader_array = VmReaderArray::from_user_io_vecs(&user_space, io_vec_ptr, io_vec_count)?;
+    let mut reader_array = match VmReaderArray::from_user_io_vecs(&user_space, io_vec_ptr, io_vec_count) {
+        Ok(array) => array,
+        Err(err) => {
+            debug!(
+                "Failed to create VmReaderArray from io_vec_ptr = 0x{:x}, io_vec_count = {}: {:?}",
+                io_vec_ptr, io_vec_count, err
+            );
+            return Err(err);
+        }
+    };
+
     for reader in reader_array.readers_mut() {
         if !reader.has_remain() {
             continue;
@@ -141,9 +163,20 @@ fn do_sys_writev(
         // but the current implementation does not ensure atomicity.
         // A suitable fix would be to add a `writev` method for the `FileLike` trait,
         // allowing each subsystem to implement atomicity.
-        let write_len = file.write(reader)?;
+        // let write_len = file.write(reader)?;
+        let write_len = match file.write(reader) {
+            Ok(len) => len,
+            Err(err) => {
+                if total_len == 0 {
+                    return Err(err);
+                }
+                return Ok(total_len);
+            }
+        };
         total_len += write_len;
     }
+
+    debug!("writev: Total bytes written: {}", total_len);
     Ok(total_len)
 }
 
