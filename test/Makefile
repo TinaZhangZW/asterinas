@@ -125,7 +125,7 @@ $(INITRAMFS)/lib/x86_64-linux-gnu: | $(VDSO_LIB)
 	@cp -L /lib/x86_64-linux-gnu/libGLdispatch.so.0 $@
 	@cp -L /lib/x86_64-linux-gnu/libGLX.so.0 $@
 	@cp -L /lib/x86_64-linux-gnu/libX11.so.6 $@
-	# @cp -L /lib/x86_64-linux-gnu/libxcb.so.1 $@
+	@# cp -L /lib/x86_64-linux-gnu/libxcb.so.1 $@
 	@cp -L /user-de/gtk/installed_dir/libxcb.so.1 $@
 	@cp -L /lib/x86_64-linux-gnu/libLLVM-15.so.1 $@
 	@cp -L /lib/x86_64-linux-gnu/libexpat.so.1 $@
@@ -295,7 +295,7 @@ $(INITRAMFS)/usr/bin: | $(INITRAMFS)/bin
 	@cp /usr/bin/gtk3-demo $@
 	@cp /user-de/gtk/hello-gtk/hello-gtk $@
 	@cp /user-de/gtk/run_hello_gtk.sh $@
-	# Add a new file in user-de.
+	@# Add a new file in user-de.
 	@cp /user-de/gtk/run_gtk_demo.sh $@
 	@cp /user-de/tools/setup_dev.sh $@
 	@#required for xfce4
@@ -344,7 +344,7 @@ $(INITRAMFS)/usr/share:
 
 $(INITRAMFS)/etc/X11:
 	@mkdir -p $@
-	@cp -r /etc/X11/xorg.conf.d $@
+	@cp -r /user-de/xorg/etc_dir/xorg.conf.d $@
 
 $(INITRAMFS)/etc/dbus-1:
 	@mkdir -p $@
