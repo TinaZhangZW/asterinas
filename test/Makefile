@@ -102,7 +102,7 @@ $(INITRAMFS)/lib/x86_64-linux-gnu: | $(VDSO_LIB)
 	@cp -L /lib/x86_64-linux-gnu/libXdmcp.so.6 $@
 	@cp -L /lib/x86_64-linux-gnu/libXfont2.so.2 $@
 	@cp -L /lib/x86_64-linux-gnu/libxshmfence.so.1 $@
-	@cp -L /root/ubuntu/dbus/dbus-1.12.20/dbus/.libs/libdbus-1.so.3 $@
+	@cp -L /user-de/dbus/dbus_src/dbus-1.12.20/dbus/.libs/libdbus-1.so.3 $@
 	@cp -L /lib/x86_64-linux-gnu/libudev.so.1 $@
 	@cp -L /lib/x86_64-linux-gnu/libdrm.so.2 $@
 	@cp -L /lib/x86_64-linux-gnu/libxcvt.so.0 $@
@@ -282,16 +282,16 @@ $(INITRAMFS)/usr/bin: | $(INITRAMFS)/bin
 	@echo "#!/bin/sh" > $@/run_xorg.sh
 	@echo "/usr/bin/Xorg :0 -modulepath /usr/lib/xorg/modules -config /etc/X11/xorg.conf.d/10-fbdev.conf -logverbose 6 -logfile ~/xorg_debug.log -novtswitch -keeptty -keyboard "keyboard" -pointer "mouse0" &" >> $@/run_xorg.sh
 	@chmod +x $@/run_xorg.sh
-	@cp /root/ubuntu/dbus/dbus-1.12.20/setup_dbus.sh $@/setup_dbus.sh
+	@cp /user-de/dbus/dbus_src/dbus-1.12.20/setup_dbus.sh $@/setup_dbus.sh
 	@echo "/usr/bin/dbus-send --system --dest=org.freedesktop.DBus --print-reply /org/freedesktop/DBus org.freedesktop.DBus.ListNames" > $@/run_dbus-send.sh
 	@echo "/usr/bin/dbus-send --session --dest=org.freedesktop.DBus --print-reply /org/freedesktop/DBus org.freedesktop.DBus.ListNames" >> $@/run_dbus-send.sh
 	@chmod +x $@/run_dbus-send.sh
-	@cp /root/ubuntu/dbus/dbus-1.12.20/bus/.libs/dbus-daemon $@/dbus-daemon
-	@cp /root/ubuntu/dbus/dbus-1.12.20/tools/.libs/dbus-uuidgen $@/dbus-uuidgen
-	@cp /root/ubuntu/dbus/dbus-1.12.20/tools/.libs/dbus-launch $@/dbus-launch
-	@cp /root/ubuntu/dbus/dbus-1.12.20/tools/.libs/dbus-send $@/dbus-send
-	@cp /root/ubuntu/dbus/dbus-1.12.20/tools/.libs/dbus-monitor $@/dbus-monitor
-	@cp /root/ubuntu/dbus/dbus-1.12.20/tools/dbus-cleanup-sockets $@/dbus-cleanup-sockets
+	@cp /user-de/dbus/dbus_src/dbus-1.12.20/bus/.libs/dbus-daemon $@/dbus-daemon
+	@cp /user-de/dbus/dbus_src/dbus-1.12.20/tools/.libs/dbus-uuidgen $@/dbus-uuidgen
+	@cp /user-de/dbus/dbus_src/dbus-1.12.20/tools/.libs/dbus-launch $@/dbus-launch
+	@cp /user-de/dbus/dbus_src/dbus-1.12.20/tools/.libs/dbus-send $@/dbus-send
+	@cp /user-de/dbus/dbus_src/dbus-1.12.20/tools/.libs/dbus-monitor $@/dbus-monitor
+	@cp /user-de/dbus/dbus_src/dbus-1.12.20/tools/dbus-cleanup-sockets $@/dbus-cleanup-sockets
 	@cp /usr/bin/gtk3-demo $@
 	@cp /user-de/gtk/hello-gtk/hello-gtk $@
 	@cp /user-de/gtk/run_hello_gtk.sh $@
@@ -317,8 +317,8 @@ $(INITRAMFS)/usr/share:
 	@cp -r /usr/share/fonts $@
 	@cp -r /usr/share/X11 $@
 	@mkdir -p $@/dbus-1
-	@cp /root/ubuntu/dbus/dbus-1.12.20/bus/system.conf $@/dbus-1/system.conf
-	@cp /root/ubuntu/dbus/dbus-1.12.20/bus/session.conf $@/dbus-1/session.conf
+	@cp /user-de/dbus/dbus_src/dbus-1.12.20/bus/system.conf $@/dbus-1/system.conf
+	@cp /user-de/dbus/dbus_src/dbus-1.12.20/bus/session.conf $@/dbus-1/session.conf
 	@mkdir -p $@/glib-2.0/schemas
 	@cp -r /usr/share/glib-2.0/schemas/* $@/glib-2.0/schemas/
 	@mkdir -p $@/themes/Default/gtk-3.0
@@ -339,7 +339,7 @@ $(INITRAMFS)/usr/share:
 	@cp -r /usr/share/icons/hicolor/* $@/icons/hicolor/
 	@cp -r /usr/share/locale $@
 	@cp -r /usr/share/gtk-3.0 $@
-	@cp -r /usr/share/dbus-1 $@
+	@cp -r /user-de/dbus/dbus_src/dbus-1 $@
 	@cp -r /usr/share/mime $@
 
 $(INITRAMFS)/etc/X11:
@@ -348,10 +348,10 @@ $(INITRAMFS)/etc/X11:
 
 $(INITRAMFS)/etc/dbus-1:
 	@mkdir -p $@
-	@cp -r /etc/dbus-1/system.d $@
-	@cp -r /etc/dbus-1/session.d $@
-	@cp -r /root/ubuntu/dbus/dbus-1.12.20/bus/legacy-config/system.conf $@
-	@cp -r /root/ubuntu/dbus/dbus-1.12.20/bus/session.conf $@
+	@# cp -r /etc/dbus-1/system.d $@
+	@# cp -r /etc/dbus-1/session.d $@
+	@cp -r /user-de/dbus/dbus_src/dbus-1.12.20/bus/legacy-config/system.conf $@
+	@cp -r /user-de/dbus/dbus_src/dbus-1.12.20/bus/session.conf $@
 
 $(INITRAMFS)/etc/xdg:
 	@mkdir -p $@
