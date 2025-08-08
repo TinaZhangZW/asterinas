@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 
+mod disk;
+mod partition;
+
+use aster_block::BlockDevice;
+
 use super::inode_handle::FileIo;
 use crate::{
     fs::{
+        device::disk::DISK_REGISTRY,
         fs_resolver::{FsPath, FsResolver},
         path::Path,
         utils::{mkmod, InodeType},
@@ -145,4 +151,23 @@ pub fn add_node(device: Arc<dyn Device>, path: &str, fs_resolver: &FsResolver) -
     }
 
     Ok(dev_path)
+}
+
+/// Returns the corresponding `BlockDevice` by its absolute path, if it exists.
+pub fn find_disk(abs_path: &str) -> Option<Arc<dyn BlockDevice>> {
+    let disk_path = abs_path.trim_start_matches("/dev/");
+    for disk in DISK_REGISTRY.lock().iter() {
+        if disk_path == disk.name() {
+            return disk.device();
+        }
+        if let Ok(index) = disk_path.trim_start_matches(disk.name()).parse::<usize>() {
+            return disk.partition(index);
+        };
+    }
+
+    None
+}
+
+pub fn init_disk(fs_resolver: &FsResolver) {
+    disk::init(fs_resolver);
 }

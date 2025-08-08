@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MPL-2.0
-
 mod fb;
 mod full;
 mod null;
@@ -21,7 +20,7 @@ pub use urandom::Urandom;
 
 use crate::{
     fs::{
-        device::{add_node, Device, DeviceId},
+        device::{add_node, Device, DeviceId, init_disk},
         fs_resolver::FsPath,
         ramfs::RamFs,
     },
@@ -75,8 +74,10 @@ pub fn init_in_first_process(ctx: &Context) -> Result<()> {
     let fb = Arc::new(fb::Fb);
     add_node(fb, "fb0", &fs_resolver)?;
 
-    pty::init_in_first_process(&fs_resolver, ctx)?;
+    // For Block device only
+    init_disk(&fs_resolver);
 
+    pty::init_in_first_process(&fs_resolver, ctx)?;
     shm::init_in_first_process(&fs_resolver, ctx)?;
 
     Ok(())
