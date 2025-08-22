@@ -84,6 +84,16 @@ impl FramebufferConsole {
             inner: SpinLock::new((state, esc_fsm)),
         }
     }
+
+    /// Triggers the registered input callbacks with the given data.
+    pub(crate) fn trigger_input_callbacks(&self, bytes: &[u8]) {
+        let callbacks = self.callbacks.lock();
+        let reader = VmReader::<Infallible>::from(bytes);
+
+        for callback in callbacks.iter() {
+            callback(reader.clone());
+        }
+    }
 }
 
 impl core::fmt::Debug for FramebufferConsole {
