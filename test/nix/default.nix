@@ -17,11 +17,12 @@ let
     sha256 = "1fbhkqm8cnsxszw4d4g0402vwsi75yazxkpfx3rdvln4n6s68saf";
   };
   pkgs = import nixpkgs {
-    config = { };
+    config = { allowUnfree = true; };
     overlays = [ ];
     inherit crossSystem;
   };
 in rec {
+  iso-image = pkgs.callPackage ./iso-image { };
   # Packages needed by initramfs
   apps = pkgs.callPackage ./apps.nix { };
   busybox = pkgs.busybox;
