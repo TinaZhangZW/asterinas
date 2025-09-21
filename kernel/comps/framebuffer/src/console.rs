@@ -5,7 +5,7 @@ use alloc::{sync::Arc, vec::Vec};
 use aster_console::{AnyConsoleDevice, BitmapFont, ConsoleCallback, ConsoleSetFontError};
 use aster_keyboard::InputKey;
 use ostd::{
-    mm::{HasSize, VmReader},
+    mm::{HasSize, Infallible, VmReader},
     sync::{LocalIrqDisabled, SpinLock},
 };
 use spin::Once;
