@@ -5,7 +5,14 @@ use aster_util::printer::VmPrinter;
 use inherit_methods_macro::inherit_methods;
 
 use super::*;
-use crate::{fs::file_handle::Mappable, prelude::*, process::signal::Pollable};
+use crate::{
+    fs::{
+        file_handle::{FileLike, Mappable},
+        utils::InodeType,
+    },
+    prelude::*,
+    process::signal::Pollable,
+};
 
 impl InodeHandle<Rights> {
     pub fn new(path: Path, access_mode: AccessMode, status_flags: StatusFlags) -> Result<Self> {
