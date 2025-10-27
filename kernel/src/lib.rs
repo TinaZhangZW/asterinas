@@ -130,7 +130,12 @@ fn init_in_first_kthread(fs_resolver: &FsResolver) {
 
 fn init_in_first_process(ctx: &Context) {
     component::init_all(InitStage::Process, component::parse_metadata!()).unwrap();
-    device::init_in_first_process(ctx).unwrap();
+    match device::init_in_first_process(ctx) {
+        Ok(_) => {}
+        Err(e) => {
+            log::warn!("Init device failed:");
+        }
+    }
     fs::init_in_first_process(ctx);
     process::init_in_first_process(ctx);
 }
