@@ -1,6 +1,19 @@
 #!/bin/sh
 mount -t proc proc /proc
 
+# Relax permissions for desktop launchers when present
+chmod a+rw /Desktop/*.desktop 2>/dev/null || true
+
+# Select a writable directory for runtime state and PID files
+RUNTIME_DIR=/run
+if ! (mkdir -p "$RUNTIME_DIR" >/dev/null 2>&1 && : > "$RUNTIME_DIR/.xfce-write-test" 2>/dev/null); then
+  RUNTIME_DIR=/tmp/run
+  mkdir -p "$RUNTIME_DIR"
+fi
+rm -f "$RUNTIME_DIR/.xfce-write-test"
+chmod 700 "$RUNTIME_DIR" 2>/dev/null || true
+export XDG_RUNTIME_DIR="$RUNTIME_DIR"
+
 # Step 1: run dbus
 export DBUS_VERBOSE=1
 export DBUS_DEBUG_OUTPUT=1
@@ -9,11 +22,11 @@ chmod 755 /run/dbus
 eval "$(/usr/bin/dbus-launch --sh-syntax)"
 
 if command -v dconf-service >/dev/null 2>&1; then
-  dconf-service > ~/dconf.log 2>&1 & echo $! > /run/dconf-service.pid &
+  dconf-service > ~/dconf.log 2>&1 & echo $! > "$RUNTIME_DIR/dconf-service.pid" &
 fi
 
 # Step 2: run Xorg
-Xorg :0 -modulepath /usr/lib/xorg/modules -config /usr/share/X11/xorg.conf.d/10-fbdev.conf -logverbose 6 -logfile /var/xorg_debug.log -novtswitch -keeptty -keyboard keyboard -pointer mouse0 -xkbdir /usr/share/X11/xkb & echo $! > /run/xorg.pid &
+Xorg :0 -modulepath /usr/lib/xorg/modules -config /usr/share/X11/xorg.conf.d/10-fbdev.conf -logverbose 6 -logfile /var/xorg_debug.log -novtswitch -keeptty -keyboard keyboard -pointer mouse0 -xkbdir /usr/share/X11/xkb & echo $! > "$RUNTIME_DIR/xorg.pid" &
 
 # xfconfd will be called by xfsettingsd, thus no need to run it manually
 export DISPLAY=:0
@@ -37,11 +50,11 @@ export G_MESSAGES_DEBUG=all
 if command -v tumblerd >/dev/null 2>&1; then
   tumblerd -n > ~/tumblerd.log 2>&1 &
 fi
-xfsettingsd > ~/xfsettingsd.log 2>&1 & echo $! > /run/xfsettingsd.pid &
+xfsettingsd > ~/xfsettingsd.log 2>&1 & echo $! > "$RUNTIME_DIR/xfsettingsd.pid" &
 
 #Step 3: run xfwm4
 export XFWM4_LOG_FILE="/xfwm4.log"
-xfwm4 --compositor=off & echo $! > /run/xfwm4.pid &
+xfwm4 --compositor=off & echo $! > "$RUNTIME_DIR/xfwm4.pid" &
 #strace -o xfwm4_strace.log /usr/bin/xfwm4 --compositor=off -d &
 #In asterinas /dev/null seems not working well. So needs to use "-d"
 
@@ -56,4 +69,4 @@ xfdesktop --enable-debug > ~/xfdesktop.log 2>&1 & echo $! > /run/xfdesktop.pid &
 #strace -o xfdesktop_strace.log /usr/bin/xfdesktop --enable-debug > ~/xfdesktop.log 2>&1 &
 
 #Step 5: run xfce4-panel
-xfce4-panel > ~/xfce4-panel.log 2>&1 & echo $! > /run/xfce4-panel.pid &
+xfce4-panel > ~/xfce4-panel.log 2>&1 & echo $! > "$RUNTIME_DIR/xfce4-panel.pid" &

@@ -61,6 +61,7 @@ let
          pkgs.five-or-more
          pkgs.tali
          pkgs.gnome-chess
+         pkgs.galculator
        ];
 in stdenvNoCC.mkDerivation {
   name = "initramfs";
@@ -206,6 +207,10 @@ in stdenvNoCC.mkDerivation {
       xfdesktop_mappings="bin:$out/usr/bin share:$out/usr/share"
       process_package_mappings "${xfce.xfdesktop}" "$xfdesktop_mappings" "XFDesktop"
 
+      # Install custom wallpaper
+      mkdir -p $out/usr/share/backgrounds/asterinas
+      cp ${./files/Desktop_Background.png} $out/usr/share/backgrounds/asterinas/Desktop_Background.png
+
       # Generate xfce4-desktop.xml with default wallpaper settings
       mkdir -p $out/etc/xdg/xfce4/xfconf/xfce-perchannel-xml
       cat > $out/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml << 'EOF'
@@ -216,7 +221,7 @@ in stdenvNoCC.mkDerivation {
     <property name="screen0" type="empty">
       <property name="monitordefault" type="empty">
         <property name="workspace0" type="empty">
-          <property name="last-image" type="string" value="/usr/share/backgrounds/xfce/xfce-flower.svg"/>
+          <property name="last-image" type="string" value="/usr/share/backgrounds/asterinas/Desktop_Background.png"/>
         </property>
       </property>
     </property>
@@ -282,6 +287,7 @@ EOF
       # Thunar File Manager
       thunar_mappings="bin:$out/usr/bin etc:$out/etc share:$out/usr/share"
       process_package_mappings "${pkgs.xfce.thunar}" "$thunar_mappings" "Thunar"
+      ln -sf thunar $out/usr/bin/Thunar
 
       # Configure Thunar as default file manager
       mkdir -p $out/usr/share/applications
@@ -349,6 +355,7 @@ EOF
       mkdir -p $out/root/Documents
       cp ${./files/CortenMM_ZGC.pdf} $out/root/Documents/CortenMM_ZGC.pdf
       cp ${./files/sample-aster.pdf} $out/root/Documents/sample-aster.pdf
+      cp ${./files/Asterinas_Introduction.pdf} $out/root/Documents/Asterinas_Introduction.pdf
 
       # Create desktop shortcut for the PDF
       mkdir -p $out/root/Desktop
@@ -390,6 +397,10 @@ EOF
       # GNOME Chess
       chess_mappings="bin:$out/usr/bin share:$out/usr/share"
       process_package_mappings "${pkgs.gnome-chess}" "$chess_mappings" "GNOME-Chess"
+
+      # Galculator (Calculator application)
+      galculator_mappings="bin:$out/usr/bin share:$out/usr/share"
+      process_package_mappings "${pkgs.galculator}" "$galculator_mappings" "Galculator"
 
       # Install Adwaita Icon Theme
       cp -raf ${pkgs.adwaita-icon-theme}/share/icons/Adwaita $out/usr/share/icons
@@ -535,6 +546,7 @@ EOF
           mkdir -p "$hicolor_base/symbolic/apps"
           cp ${pkgs.hicolor-icon-theme}/share/icons/hicolor/index.theme $out/usr/share/icons/hicolor
       ''}
+      cp $out/usr/share/applications/galculator.desktop $out/Desktop/
     ''}
 
     # Copy application packages
