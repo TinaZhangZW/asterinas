@@ -33,31 +33,6 @@ export GIO_MODULE_DIR=/usr/lib/gio/modules
 export GIO_EXTRA_MODULES=/usr/lib/gio/modules
 
 #for debug
-export G_MESSAGES_DEBUG=all
+#export G_MESSAGES_DEBUG=all
 
 xfce4-session &
-
-# Start tumbler (thumbnails used by settings dialog)
-if command -v tumblerd >/dev/null 2>&1; then
-  tumblerd -n > ~/tumblerd.log 2>&1 &
-fi
-xfsettingsd > ~/xfsettingsd.log 2>&1 & echo $! > /run/xfsettingsd.pid &
-
-#Step 4: run xfwm4
-export XFWM4_LOG_FILE="/xfwm4.log"
-xfwm4 --compositor=off & echo $! > /run/xfwm4.pid &
-#strace -o xfwm4_strace.log /usr/bin/xfwm4 --compositor=off -d &
-#In asterinas /dev/null seems not working well. So needs to use "-d"
-
-# Wait for EWMH props so xfdesktop doesn’t start “too early”
-for i in $(seq 1 50); do
-  if xprop -root _NET_NUMBER_OF_DESKTOPS >/dev/null 2>&1; then break; fi
-  sleep 0.1
-done
-
-#Step 5: run xfdesktop
-xfdesktop --enable-debug > ~/xfdesktop.log 2>&1 & echo $! > /run/xfdesktop.pid &
-#strace -o xfdesktop_strace.log /usr/bin/xfdesktop --enable-debug > ~/xfdesktop.log 2>&1 &
-
-#Step 6: run xfce4-panel
-xfce4-panel > ~/xfce4-panel.log 2>&1 & echo $! > /run/xfce4-panel.pid &
