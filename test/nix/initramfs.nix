@@ -16,7 +16,7 @@ let
     name = "agetty";
     path = "/usr/sbin/agetty";
   };
-  all_pkgs = [ busybox etc systemd] ++ lib.optionals (apps != null) [ apps.package ]
+  all_pkgs = [ busybox etc systemd ] ++ lib.optionals (apps != null) [ apps.package ]
     ++ lib.optionals (benchmark != null) [ benchmark.package ]
     ++ lib.optionals (syscall != null) [ syscall.package ]
     ++ lib.optionals (xfce != null) [
@@ -239,12 +239,52 @@ in stdenvNoCC.mkDerivation {
     rm $out/etc/systemd/system/sysinit.target.wants/sys-kernel-tracing.mount
     rm $out/etc/systemd/system/sysinit.target.wants/systemd-update-done.service
 
-    ln -sf ./multi-user.target $out/etc/systemd/system/default.target
+    # Conditionally set the default target based on whether XFCE is enabled
+    ${lib.optionalString (xfce == null) ''
+      # For non-graphical boot, use multi-user.target
+      echo "Setting default target to multi-user.target"
+      ln -sf ./multi-user.target $out/etc/systemd/system/default.target
+    ''}
 
     # Copies the contents of the /etc
     cp -r ${etc}/* $out/etc/
 
     ${lib.optionalString (xfce != null) ''
+      # For graphical boot, use graphical.target
+      echo "Setting default target to graphical.target"
+      ln -sf ./graphical.target $out/etc/systemd/system/default.target
+
+      cat > $out/etc/systemd/system/xfce-desktop.service << 'EOF'
+[Unit]
+Description=XFCE Desktop Environment
+# Start after the basic multi-user environment and login manager are ready
+After=multi-user.target
+
+[Service]
+# Set the display environment variable for the X server
+Environment=DISPLAY=:0
+
+# The command to execute. Replace with the actual path to your script.
+ExecStart=/usr/bin/run_as_xfce.sh
+StandardOutput=tty
+StandardError=tty
+
+KillMode=process
+Delegate=yes
+
+Restart=no
+Type=simple
+
+[Install]
+# This service is part of the graphical target
+WantedBy=graphical.target
+EOF
+
+      # 2. Enable the service by linking it to the graphical target's wants directory
+      echo "Enabling xfce-desktop.service"
+      mkdir -p $out/etc/systemd/system/graphical.target.wants
+      ln -sf /etc/systemd/system/xfce-desktop.service $out/etc/systemd/system/graphical.target.wants/xfce-desktop.service
+
       # XFConf
       xfconf_mappings="bin:$out/usr/bin share:$out/usr/share"
       process_package_mappings "${pkgs.xfce.xfconf}" "$xfconf_mappings" "XFConf"
@@ -515,8 +555,9 @@ EOF
           cp -raf ${pkgs.dbus}/etc/dbus-1 $out/etc/dbus-1
           cp ${./patches/dbus/session.conf} $out/etc/dbus-1/session.conf
           cp ${./patches/dbus/system.conf} $out/etc/dbus-1/system.conf
-          cp -raf ${pkgs.dbus}/etc/systemd/system $out/etc/systemd
-          cp -raf ${pkgs.dbus}/etc/systemd/user $out/etc/systemd
+          chmod -R 0777 $out/etc/systemd/user
+          cp -raf ${pkgs.dbus}/etc/systemd/system/* $out/etc/systemd/system/
+          cp -raf ${pkgs.dbus}/etc/systemd/user/* $out/etc/systemd/user/
           mkdir -p $out/usr/libexec/
           cp -raf ${pkgs.dbus}/libexec/* $out/usr/libexec/
           cp -raf ${pkgs.dbus}/lib/tmpfiles.d/* $out/usr/lib/tmpfiles.d
