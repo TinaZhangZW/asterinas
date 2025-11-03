@@ -28,6 +28,18 @@ mount -o umask=077,sync,dirsync "${INSATLL_DEVICE}1" /mnt/boot
 
 mkdir -p /mnt/etc/nixos
 cp /asterinas/configuration.nix /mnt/etc/nixos/configuration.nix
+if [ -f /asterinas/xorg.nix ]; then
+    cp /asterinas/xorg.nix /mnt/etc/nixos/xorg.nix
+fi
+if [ -f /asterinas/xfce.nix ]; then
+    cp /asterinas/xfce.nix /mnt/etc/nixos/xfce.nix
+fi
+if [ -d /asterinas/patches ]; then
+    cp -r /asterinas/patches /mnt/etc/nixos/patches
+fi
+if [ -f /asterinas/run_as_xfce.sh ]; then
+    cp /asterinas/run_as_xfce.sh /mnt/etc/nixos/run_as_xfce.sh
+fi
 
 nixos-install --no-root-passwd
 

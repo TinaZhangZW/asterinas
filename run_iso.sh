@@ -1,7 +1,7 @@
 #!/bin/bash
 
 rm -f disk.img
-dd if=/dev/zero of=disk.img bs=1M count=4096
+dd if=/dev/zero of=disk.img bs=1M count=10240
 
 qemu-system-x86_64 \
 	-cpu host -smp 1 -m 8G -enable-kvm \
