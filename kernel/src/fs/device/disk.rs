@@ -117,7 +117,7 @@ fn add_disk_node(index: usize, name: &String, device: &Arc<dyn BlockDevice>, fs_
         }
     };
     ThreadOptions::new(task_fn).spawn();
-
+    println!("[kernel] Started virtio block device thread for {}", name);
     let id = DeviceId::new(VIRTIO_DEVICE_MAJOR, VIRTIO_DEVICE_MINORS * index as u32);
 
     let partitions = parse_partitions(device, &id, name, fs_resolver);
