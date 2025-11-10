@@ -1,9 +1,40 @@
 #!/bin/sh
 #chmod a+rw /Desktop/*.desktop
 #ln -s /bin/thunar /bin/Thunar
-source ./setup_env.sh
 ln -s /nix/var/nix/profiles/system /run/current-system
 export PATH="/run/current-system/sw/bin:/nix/var/nix/profiles/system/sw/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+
+update_env_path() {
+    local base_path="$1"
+    local folder_name="$2"
+    local env_var_name="$3"
+
+    # Read the current value of the environment variable, if it exists.
+    # Using eval to correctly handle indirect variable expansion in sh.
+    eval "current_val=\"\${${env_var_name}:-}\""
+
+    # Find all directories matching the folder_name under the base_path.
+    # Use -print to create a newline-separated list.
+    found_paths=$(find "$base_path" -type d -name "$folder_name" -print 2>/dev/null || true)
+
+    # Combine existing and new paths, then deduplicate.
+    # awk is used for robust deduplication and colon separation.
+    new_val=$(printf "%s\n%s" "$current_val" "$found_paths" | awk -v RS='[:\n]' '!seen[$0]++ && $0' | paste -sd: -)
+
+    # Export the final, updated environment variable.
+    export "${env_var_name}=${new_val}"
+    echo "Updated ${env_var_name}."
+}
+
+echo "Stage 2: Setting up environment variables..."
+update_env_path "/nix/store" "share" "XDG_DATA_DIRS"
+update_env_path "/nix/store" "modules" "GIO_EXTRA_MODULES"
+update_env_path "/nix/store" "xdg" "XDG_CONFIG_DIRS"
+
+echo "XDG_DATA_DIRS=${XDG_DATA_DIRS}"
+echo "GIO_EXTRA_MODULES=${GIO_EXTRA_MODULES}"
+echo "XDG_CONFIG_DIRS=${XDG_CONFIG_DIRS}"
+
 
 # --- FIX START ---
 # 1. Set HOME and XAUTHORITY so auth files can be created.

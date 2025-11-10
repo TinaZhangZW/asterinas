@@ -4,7 +4,7 @@ rm -f disk.img
 dd if=/dev/zero of=disk.img bs=1M count=10240
 
 qemu-system-x86_64 \
-	-cpu host -smp 1 -m 8G -enable-kvm \
+	-cpu host -smp 4 -m 8G -enable-kvm \
 	-bios /root/ovmf/release/OVMF.fd \
 	-cdrom nixos-minimal-25.05pre-git-x86_64-linux.iso -boot d \
 	-drive if=virtio,format=raw,file=disk.img \
@@ -14,3 +14,4 @@ qemu-system-x86_64 \
 	-device virtio-serial-pci,disable-legacy=on,disable-modern=off \
 	-device virtconsole,chardev=mux
 
+#-drive if=virtio,format=raw,file=disk.img \

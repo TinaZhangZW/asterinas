@@ -34,6 +34,9 @@ fi
 if [ -f /asterinas/xfce.nix ]; then
     cp /asterinas/xfce.nix /mnt/etc/nixos/xfce.nix
 fi
+if [ -f /asterinas/systemd.nix ]; then
+    cp /asterinas/systemd.nix /mnt/etc/nixos/systemd.nix
+fi
 if [ -d /asterinas/patches ]; then
     cp -r /asterinas/patches /mnt/etc/nixos/patches
 fi

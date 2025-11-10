@@ -34,6 +34,10 @@ in
       type = lib.types.path;
       default = ../xfce.nix;
     };
+    asterinas.systemd = lib.mkOption {
+      type = lib.types.path;
+      default = ../systemd.nix;
+    };
     asterinas.package = lib.mkOption {
       type = lib.types.package;
       default = pkgs.stdenv.mkDerivation {
@@ -47,6 +51,7 @@ in
           cp -L ${config.asterinas.splash} $out/splash.png
           cp -L ${config.asterinas.xorg} $out/xorg.nix
           cp -L ${config.asterinas.xfce} $out/xfce.nix
+          cp -L ${config.asterinas.systemd} $out/systemd.nix
           if [ -e ${../patches} ]; then
             mkdir -p $out/patches
             cp -r ${../patches}/* $out/patches/
@@ -121,7 +126,6 @@ in
       pkgs.tali
       pkgs.gnome-chess
 
-      pkgs.systemdMinimal
       pkgs.vim
       pkgs.busybox
       pkgs.util-linux

@@ -2,7 +2,8 @@
 let
   xfce = import ./xfce.nix { inherit pkgs; };
   xorg = import ./xorg.nix { inherit pkgs; };
-in {
+in
+{
   options = {
     asterinas.splash = lib.mkOption {
       type = lib.types.path;
@@ -15,7 +16,7 @@ in {
     asterinas.kernel-params = lib.mkOption {
       type = lib.types.str;
       default =
-        "PATH=/bin:/nix/var/nix/profiles/system/sw/bin ostd.log_level=error -- sh /init root=/dev/vda2 init=/bin/sh rd.break=0";
+        "PATH=/bin:/nix/var/nix/profiles/system/sw/bin ostd.log_level=error -- sh /init root=/dev/vda2 init=/run/current-system/systemd/lib/systemd/systemd rd.break=0";
     };
     asterinas.initramfsCompressed = lib.mkOption {
       type = lib.types.bool;
@@ -45,8 +46,6 @@ in {
   };
 
   config = {
-    systemd.package = pkgs.systemdMinimal;
-
     boot.loader.grub.enable = true;
     boot.loader.grub.efiSupport = true;
     boot.loader.grub.device = "nodev";
@@ -64,19 +63,16 @@ in {
       ln -s ${config.asterinas.initramfs}/initrd $out/initrd
     '';
 
-    # Workaround for "Failed to set up credentials" for getty.
-    # This manually creates the minimal user database files that systemd needs.
-    environment.etc."passwd".text = ''
-      root:x:0:0:root:/root:/bin/sh
-    '';
-    environment.etc."group".text = ''
-      root:x:0:
-    '';
-    # This shadow entry for root has an empty password field, allowing login without a password.
-    environment.etc."shadow".text = ''
-      root::19234:0:99999:7:::
-    '';
+    i18n.defaultLocale = "en_US.UTF-8";
+    i18n.supportedLocales = [ "en_US.UTF-8/UTF-8" ];
+    environment.variables.LANG = "en_US.UTF-8";
 
+    systemd.defaultUnit = "multi-user.target";
+    systemd.package = pkgs.callPackage ./systemd.nix { };
+    systemd.coredump.enable = false;
+    services.timesyncd.enable = false;
+    systemd.oomd.enable = false;
+    services.udev.enable = false;
     systemd.services."xfce-desktop" = {
       description = "XFCE Desktop Environment";
       after = [ "multi-user.target" ];
@@ -93,91 +89,9 @@ in {
       };
     };
 
-    systemd.enableCgroupAccounting = false;
-    # Disable services not included in systemdMinimal to prevent build errors.
-    # The 'boot.coredump.enable' line is removed because the option does not exist when using systemdMinimal.
-    services.timesyncd.enable = false;
-
-    systemd.oomd.enable = false;
-    systemd.services.dhcpcd.enable = false;
-    systemd.services."systemd-networkd".enable = false;
-    systemd.services."NetworkManager".enable = false;
-    systemd.services."wpa_supplicant".enable = false;
-    systemd.services."systemd-journald".enable = false;
-    systemd.services."systemd-udevd".enable = false;
-    systemd.services."systemd-tmpfiles-setup".enable = false;
-
-    system.activationScripts.maskSystemdUnits.text = ''
-      #!/bin/sh
-      set -e
-      # This script masks systemd units by symlinking them to /dev/null.
-      for u in \
-        sys-fs-fuse-connections.mount \
-        systemd-creds.socket \
-        systemd-creds@.service \
-        sockets.target.wants/systemd-creds.socket \
-        systemd-remount-fs.service \
-        systemd-firstboot.service \
-        systemd-random-seed.service \
-        systemd-update-utmp.service \
-        sys-kernel-config.mount \
-        sys-kernel-debug.mount \
-        sys-kernel-tracing.mount \
-        tmp.mount \
-        local-fs.target.wants/tmp.mount \
-        systemd-update-done.service \
-        nscd.service \
-        resolvconf.service \
-        network-setup.service \
-        network-setup.target \
-        network-setup.path \
-        network-setup.timer \
-        network-online.target \
-        network-pre.target \
-        network-local-commands.service \
-        network.target \
-        network-online.target.wants/dhcpcd.service \
-        network.target.wants/network-local-commands.service \
-        systemd-journal-catalog-update.service \
-        systemd-journal-flush.service \
-        systemd-journald-audit.socket \
-        systemd-journald-dev-log.socket \
-        systemd-journald-sync@.service \
-        systemd-journald-varlink@.socket \
-        systemd-journald.socket \
-        systemd-journald@.service \
-        systemd-journald@.socket \
-        systemd-journal-flush.service.d/overrides.conf \
-        systemd-journald-audit.socket.d/overrides.conf \
-        systemd-journald.service.wants/systemd-journald-audit.socket \
-        systemd-journald@.service.d/overrides.conf \
-        systemd-udevd.service \
-        systemd-udev-trigger.service \
-        systemd-udev-settle.service \
-        systemd-udevd-control.socket \
-        systemd-udevd-kernel.socket \
-        systemd-udev-settle.service.d/overrides.conf \
-        systemd-networkd.service \
-        systemd-modprobe@.service \
-        modprobe@.service \
-        sysinit.target.wants/sys-fs-fuse-connections.mount \
-        sysinit.target.wants/sys-kernel-config.mount \
-        sysinit.target.wants/sys-kernel-debug.mount \
-        sysinit.target.wants/sys-kernel-tracing.mount \
-        sysinit.target.wants/systemd-update-done.service \
-        systemd-tmpfiles-setup.service \
-        systemd-tmpfiles-clean.service \
-        systemd-tmpfiles-clean.timer \
-        systemd-tmpfiles-resetup.service \
-        systemd-tmpfiles-setup-dev-early.service \
-        systemd-tmpfiles-setup-dev.service; do
-        mkdir -p "/etc/systemd/system/$(dirname "$u")"
-        ln -sf /dev/null "/etc/systemd/system/$u"
-      done
-      if command -v systemctl >/dev/null 2>&1; then
-        systemctl daemon-reload || true
-      fi
-    '';
+    systemd.services.systemd-random-seed = {
+      enable = false;
+    };
 
     environment.variables = {
       XDG_DATA_DIRS = "/run/current-system/sw/share:/usr/share:/usr/local/share";
@@ -249,7 +163,14 @@ in {
       pkgs.vim
       pkgs.busybox
       pkgs.util-linux
+      pkgs.bash
     ];
+
+    services.getty.autologinUser = "root";
+    users.users.root = {
+      shell = "${pkgs.bash}/bin/bash";
+      hashedPassword = null;
+    };
 
     system.nixos.distroName = "Asterinas";
 
