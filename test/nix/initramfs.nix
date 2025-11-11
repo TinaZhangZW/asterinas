@@ -1,5 +1,5 @@
 { lib, stdenvNoCC, fetchFromGitHub, hostPlatform, writeClosure, busybox, apps
-, benchmark, syscall, dnsServer, pkgs, xfce ? null, xorg ? null }:
+, benchmark, syscall, systemdmin, dnsServer, pkgs, xfce ? null, xorg ? null }:
 
 let
   etc = lib.fileset.toSource {
@@ -12,10 +12,15 @@ let
     path = "/lib/x86_64-linux-gnu";
   };
 
+  agetty = builtins.path {
+    name = "agetty";
+    path = "/usr/sbin/agetty";
+  };
+
   resolv_conf = pkgs.callPackage ./resolv_conf.nix { dnsServer = dnsServer; };
   # Whether the initramfs should include evtest, a common tool to debug input devices (`/dev/input/eventX`)
   is_evtest_included = false;
-  all_pkgs = [ busybox etc resolv_conf ]
+  all_pkgs = [ busybox etc systemdmin resolv_conf ]
     ++ lib.optionals (apps != null) [ apps.package ]
     ++ lib.optionals (benchmark != null) [ benchmark.package ]
     ++ lib.optionals (syscall != null) [ syscall.package ]
@@ -142,11 +147,11 @@ in stdenvNoCC.mkDerivation {
       # First create all directories
       create_directory_structure "$source_package" "$dest_base"
 
-      # Then copy all files
+      # Then copy all regular files and symlinks
+      # include both regular files and symlinks so we don't miss sockets.target.wants/* links
       find "$source_package" \( -type f -o -type l \) | while read -r source_file; do
         # Get the relative path
-        relative_path="''${source_file#$source_package}"
-        relative_path="''${relative_path#/}"
+        relative_path=$(printf "%s" "$source_file" | sed -e 's#^'"$source_package"'/##' -e 's#^'"$source_package"'##')
 
         if [ -n "$relative_path" ]; then
           dest_file="$dest_base/$relative_path"
@@ -155,9 +160,16 @@ in stdenvNoCC.mkDerivation {
           # Ensure destination directory exists
           mkdir -p "$dest_dir"
 
-          # Copy the file
-          echo "Copying: $source_file -> $dest_file"
-          cp -af "$source_file" "$dest_file"
+          if [ -L "$source_file" ]; then
+            # Preserve symlink target (create symlink in dest with same target string)
+            target="$(readlink "$source_file")"
+            echo "Creating symlink: $dest_file -> $target"
+            ln -sf "$target" "$dest_file"
+          else
+            # Copy regular file (preserve metadata)
+            echo "Copying file: $source_file -> $dest_file"
+            cp -fL "$source_file" "$dest_file"
+          fi
         fi
       done
     }
@@ -189,7 +201,6 @@ in stdenvNoCC.mkDerivation {
       echo ""
     }
 
-    # Create base directory structure
     mkdir -p $out/{dev,etc,root,usr,opt,tmp,var,proc,sys}
     mkdir -p $out/{benchmark,test,ext2,exfat}
     mkdir -p $out/usr/{bin,sbin,lib,lib64,local}
@@ -206,7 +217,53 @@ in stdenvNoCC.mkDerivation {
       cp -r ${pkgs.evtest}/bin/* $out/bin/
     ''}
 
-    # Copies the contents of the /etc
+    mkdir -p $out/lib/x86_64-linux-gnu
+    cp -L ${gvisor_libs}/ld-linux-x86-64.so.2 $out/lib64/ld-linux-x86-64.so.2
+    cp -L ${gvisor_libs}/libstdc++.so.6 $out/lib/x86_64-linux-gnu/libstdc++.so.6
+    cp -L ${gvisor_libs}/libgcc_s.so.1 $out/lib/x86_64-linux-gnu/libgcc_s.so.1
+    cp -L ${gvisor_libs}/libc.so.6 $out/lib/x86_64-linux-gnu/libc.so.6
+    cp -L ${gvisor_libs}/libm.so.6 $out/lib/x86_64-linux-gnu/libm.so.6
+
+    cp "${agetty}" $out/sbin/agetty
+
+    mkdir -p $out/share
+    #cp -r ${systemdmin}/bin/* $out/bin/
+    #cp -r ${systemdmin}/lib/* $out/lib/
+    #cp -r ${systemdmin}/sbin/* $out/sbin/
+    #cp -r ${systemdmin}/share/* $out/share/
+    #cp -r ${systemdmin}/example/* $out/etc/
+    # Setup systemd
+    systemd_mappings="bin:$out/bin lib:$out/lib example:$out/etc sbin:$out/sbin share:$out/share"
+    process_package_mappings "${systemdmin}" "$systemd_mappings" "Systemd"
+
+    chmod -R 0777 $out/etc/systemd/system/
+
+    #find $out/etc/systemd/system \( -type f -o -type l \) \( -name "*udev*" -o -name "*journal*" -o -name "*network*" -o -name "*modprobe*" -o -name "*tmpfiles*" \) -delete
+    #find $out/etc/systemd/system \( -type f -o -type l \) \( -name "*udev*" \) -delete
+    #rm $out/etc/systemd/system/sys-fs-fuse-connections.mount
+    #rm $out/etc/systemd/system/systemd-creds.socket
+    #rm $out/etc/systemd/system/systemd-creds@.service
+    #rm $out/etc/systemd/system/sockets.target.wants/systemd-creds.socket
+    rm $out/etc/systemd/system/systemd-udevd.service
+    #rm $out/etc/systemd/system/systemd-remount-fs.service
+    rm $out/etc/systemd/system/systemd-firstboot.service
+
+    rm $out/etc/systemd/system/systemd-random-seed.service
+    #rm $out/etc/systemd/system/systemd-update-utmp.service
+    #rm $out/etc/systemd/system/sys-kernel-config.mount
+    #rm $out/etc/systemd/system/sys-kernel-debug.mount
+    #rm $out/etc/systemd/system/sys-kernel-tracing.mount
+    #rm $out/etc/systemd/system/tmp.mount
+    rm $out/etc/systemd/system/local-fs.target.wants/tmp.mount
+    #rm $out/etc/systemd/system/systemd-update-done.service
+    #rm $out/etc/systemd/system/sysinit.target.wants/sys-fs-fuse-connections.mount
+    #rm $out/etc/systemd/system/sysinit.target.wants/sys-kernel-config.mount
+    #rm $out/etc/systemd/system/sysinit.target.wants/sys-kernel-debug.mount
+    #rm $out/etc/systemd/system/sysinit.target.wants/sys-kernel-tracing.mount
+    #rm $out/etc/systemd/system/sysinit.target.wants/systemd-update-done.service
+
+    ln -sf ./multi-user.target $out/etc/systemd/system/default.target
+
     cp -r ${etc}/* $out/etc/
     cat > $out/etc/issue << 'EOF'
 <<< Welcome to Asterinas NixOS 25.05.813221.9a7b80b6f82a (\m) - \l >>>

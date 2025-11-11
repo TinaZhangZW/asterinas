@@ -25,6 +25,9 @@ in rec {
   # Packages needed by initramfs
   apps = pkgs.callPackage ./apps.nix { };
   busybox = pkgs.busybox;
+  systemdmin = pkgs.callPackage ./systemd.nix {
+    inherit pkgs;
+  };
   benchmark = pkgs.callPackage ./benchmark { };
   syscall = pkgs.callPackage ./syscall {
     inherit smp;
@@ -40,7 +43,7 @@ in rec {
   };
 
   initramfs = pkgs.callPackage ./initramfs.nix {
-    inherit busybox;
+    inherit busybox systemdmin;
     apps = if enableBasicTest then apps else null;
     benchmark = if enableBenchmark then benchmark else null;
     syscall = if enableSyscallTest then syscall else null;
