@@ -6,6 +6,7 @@ use core::{
     sync::atomic::{AtomicU32, Ordering},
 };
 
+use align_ext::AlignExt;
 use bitflags::bitflags;
 use hashbrown::HashMap;
 use ostd::{mm::VmWriter, sync::Mutex};
@@ -177,7 +178,12 @@ impl FsnotifyGroup for InotifyFile {
             .inner
             .lock()
             .mask;
+        debug!(
+            "[inotify] send_event: wd={}, mask=0x{:x}, mark_mask=0x{:x}, name='{}'",
+            wd, mask, mark_mask, name
+        );
         if mark_mask & mask == 0 && mask != InotifyMask::IN_IGNORED.bits() {
+            debug!("[inotify] send_event: mask not matched, ignoring event");
             return;
         }
         let new_event: Arc<dyn FsnotifyEvent> = Arc::new(InotifyEvent::new(
@@ -190,6 +196,7 @@ impl FsnotifyGroup for InotifyFile {
 
         // Try to merge with the last event if possible
         let mut notifications = self.notifications.write();
+        let queue_size_before = notifications.len();
         let mut merged = false;
         if let Some(last_event) = notifications.last() {
             if let Some(last_inotify_event) =
@@ -204,16 +211,19 @@ impl FsnotifyGroup for InotifyFile {
                         notifications.pop();
                         notifications.push(new_event.clone());
                         merged = true;
+                        debug!("[inotify] send_event: merged with last event");
                     }
                 }
             }
         }
         if !merged {
             notifications.push(new_event.clone());
+            debug!("[inotify] send_event: added new event to queue (queue_size: {} -> {})", queue_size_before, notifications.len());
         }
         drop(notifications);
         // New or merged event makes the file readable
         self.pollee.notify(IoEvents::IN);
+        debug!("[inotify] send_event: notified pollee");
     }
 
     fn pop_event(&self) -> Option<Arc<dyn FsnotifyEvent>> {
@@ -257,7 +267,11 @@ impl Pollable for InotifyFile {
 
 impl FileLike for InotifyFile {
     fn read(&self, writer: &mut VmWriter) -> Result<usize> {
-        if self.flags.contains(InotifyFlags::IN_NONBLOCK) && self.get_all_event_size() == 0 {
+        let all_event_size = self.get_all_event_size();
+        debug!("[inotify] read: starting, all_event_size={}, writer.avail()={}", all_event_size, writer.avail());
+        
+        if self.flags.contains(InotifyFlags::IN_NONBLOCK) && all_event_size == 0 {
+            debug!("[inotify] read: non-blocking mode with no events, returning EAGAIN");
             return_errno_with_message!(Errno::EAGAIN, "non-blocking read");
         }
 
@@ -265,17 +279,28 @@ impl FileLike for InotifyFile {
         let mut consumed_events = 0;
         loop {
             let event = match self.pop_event() {
-                Some(event) => event,
-                None => break,
+                Some(event) => {
+                    debug!("[inotify] read: popped event #{}", consumed_events + 1);
+                    event
+                }
+                None => {
+                    debug!("[inotify] read: no more events, breaking");
+                    break;
+                }
             };
 
             match event.copy_to_user(writer) {
                 Ok(event_size) => {
                     size += event_size;
                     consumed_events += 1;
+                    debug!(
+                        "[inotify] read: successfully copied event #{} ({} bytes), total_size={}, remaining_avail={}",
+                        consumed_events, event_size, size, writer.avail()
+                    );
                 }
                 Err(e) => {
                     // Put the failed event back at the front for the next read
+                    debug!("[inotify] read: failed to copy event #{}: {:?}, putting it back", consumed_events + 1, e);
                     self.notifications.write().insert(0, event);
                     if consumed_events == 0 {
                         return Err(e);
@@ -285,6 +310,7 @@ impl FileLike for InotifyFile {
             }
         }
         self.pollee.invalidate();
+        debug!("[inotify] read: completed, consumed {} events, total_size={}", consumed_events, size);
         Ok(size)
     }
 
@@ -431,6 +457,23 @@ impl FsnotifyMark for InotifyMark {
     }
 }
 
+/// Linux inotify_event structure for alignment calculation.
+/// This matches the C structure layout:
+/// struct inotify_event {
+///     int      wd;       /* Watch descriptor */
+///     uint32_t mask;     /* Mask of events */
+///     uint32_t cookie;   /* Unique cookie associating related events */
+///     uint32_t len;      /* Size of name field */
+///     char     name[];   /* Optional null-terminated name */
+/// };
+#[repr(C)]
+struct InotifyEventHeader {
+    wd: i32,
+    mask: u32,
+    cookie: u32,
+    len: u32,
+}
+
 struct InotifyEvent {
     wd: u32,
     mask: u32,
@@ -449,31 +492,110 @@ impl InotifyEvent {
             name,
         }
     }
+
+    /// Rounds the event name length (including the trailing null byte) up to
+    /// a multiple of `sizeof(struct inotify_event)`.
+    ///
+    /// This ensures that each event in the buffer is aligned to the struct
+    /// boundary, preventing unaligned access issues in user space.
+    ///
+    /// If the name is empty, returns 0.
+    fn round_event_name_len(&self) -> usize {
+        if self.name_len == 0 {
+            debug!("[inotify] round_event_name_len: name_len=0, returning 0");
+            return 0;
+        }
+        // name_len already includes the trailing null byte
+        let name_len_with_nul = self.name_len as usize;
+        let event_size = core::mem::size_of::<InotifyEventHeader>();
+        let rounded_len = name_len_with_nul.align_up(event_size);
+        debug!(
+            "[inotify] round_event_name_len: name_len={}, name_len_with_nul={}, event_size={}, rounded_len={}",
+            self.name_len, name_len_with_nul, event_size, rounded_len
+        );
+        rounded_len
+    }
 }
 
 impl FsnotifyEvent for InotifyEvent {
+    /// Copies the event to user space with proper alignment padding.
+    ///
+    /// The implementation ensures that:
+    /// 1. The event header is written first (wd, mask, cookie, name_len)
+    /// 2. The actual filename (if any) is written
+    /// 3. The name field is padded with zeros to align to `sizeof(struct inotify_event)`
+    ///
+    /// This guarantees that each event in the buffer is aligned to the struct
+    /// boundary, allowing user space to safely iterate through events using
+    /// `sizeof(struct inotify_event)` as the step size.
     fn copy_to_user(&self, writer: &mut VmWriter) -> Result<usize> {
-        let mut total_size = 0;
+        let header_size = core::mem::size_of::<InotifyEventHeader>();
+        let mut event_size = header_size;
+
+        // Calculate padded name length first (needed for header len field)
+        let pad_name_len = self.round_event_name_len();
+        
+        debug!(
+            "[inotify] copy_to_user: wd={}, mask=0x{:x}, cookie={}, name_len={}, pad_name_len={}, name='{}'",
+            self.wd, self.mask, self.cookie, self.name_len, pad_name_len, self.name
+        );
 
         // Write the event header
-        writer.write_val(&self.wd)?;
+        // Note: wd is i32 in the C struct, but we store it as u32 internally
+        let wd_i32 = self.wd as i32;
+        writer.write_val(&wd_i32)?;
         writer.write_val(&self.mask)?;
         writer.write_val(&self.cookie)?;
-        writer.write_val(&self.name_len)?;
-        total_size += core::mem::size_of::<u32>() * 4;
-        if !self.name.is_empty() {
-            let bytes = self.name.as_bytes();
-            for byte in bytes {
-                writer.write_val(byte)?;
+        writer.write_val(&(pad_name_len as u32))?;
+        debug!("[inotify] copy_to_user: wrote header ({} bytes), len field={}", header_size, pad_name_len);
+
+        // Write the filename if present
+        if pad_name_len > 0 {
+            let name_len = self.name.len();
+            if name_len > 0 {
+                // Write the actual filename bytes
+                let name_bytes = self.name.as_bytes();
+                let mut reader = ostd::mm::VmReader::from(name_bytes).to_fallible();
+                writer.write_fallible(&mut reader).map_err(|(err, _)| err)?;
+                debug!("[inotify] copy_to_user: wrote filename '{}' ({} bytes)", self.name, name_len);
             }
+            // Write the trailing null byte
+            writer.write_val(&b'\0')?;
+            event_size += name_len + 1;
+
+            // Pad with zeros to align to struct boundary
+            let padding_len = pad_name_len - (name_len + 1);
+            if padding_len > 0 {
+                writer.fill_zeros(padding_len).map_err(|(err, _)| err)?;
+                event_size += padding_len;
+                debug!(
+                    "[inotify] copy_to_user: added padding ({} bytes), total event_size={}",
+                    padding_len, event_size
+                );
+            } else {
+                debug!("[inotify] copy_to_user: no padding needed, total event_size={}", event_size);
+            }
+        } else {
+            debug!("[inotify] copy_to_user: no name field, total event_size={}", event_size);
         }
-        writer.write_val(&b'\0')?;
-        total_size += self.name.len() + 1;
-        Ok(total_size)
+
+        debug!("[inotify] copy_to_user: completed, returning event_size={}", event_size);
+        Ok(event_size)
     }
 
+    /// Returns the total size of the event including alignment padding.
+    ///
+    /// This size is used by the read path to advance the buffer pointer,
+    /// ensuring that the next event starts at the correct alignment boundary.
     fn get_size(&self) -> usize {
-        core::mem::size_of::<u32>() * 4 + self.name.len() + 1
+        let header_size = core::mem::size_of::<InotifyEventHeader>();
+        let pad_name_len = self.round_event_name_len();
+        let total_size = header_size + pad_name_len;
+        debug!(
+            "[inotify] get_size: wd={}, header_size={}, pad_name_len={}, total_size={}",
+            self.wd, header_size, pad_name_len, total_size
+        );
+        total_size
     }
 }
 

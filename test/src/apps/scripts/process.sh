@@ -26,6 +26,7 @@ getcpu/getcpu
 getpid/getpid
 hello_pie/hello
 hello_world/hello_world
+inotify/inotify_basic_test
 inotify/inotify_poll
 itimer/setitimer
 itimer/timer_create
