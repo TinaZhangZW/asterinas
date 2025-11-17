@@ -257,7 +257,21 @@ impl Dentry {
         children.check_mountpoint(name)?;
 
         self.inode.unlink(name)?;
-        let child = children.find(name)?.unwrap();
+        let child =
+            match children.find(name)? {
+                Some(c) => c,
+                // If the dentry is not in the cache after a successful unlink,
+                // we can't do notifications, but the unlink itself was successful.
+                // Log this inconsistency and continue.
+                None => {
+                    log::warn!("dentry not found in cache after successful unlink of '{}'", name);
+                    // We can't proceed with notifications, so just clean up the cache entry.
+                    let mut children = children.upgrade();
+                    children.delete(name);
+                    return Ok(());
+                }
+            };
+
         let child_inode = child.inode();
         fsnotify_link_count(child_inode)?;
         if child_inode.hard_links() == 0 {
