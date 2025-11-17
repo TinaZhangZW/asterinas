@@ -6,8 +6,11 @@ use inherit_methods_macro::inherit_methods;
 
 use super::{Common, ProcFs};
 use crate::{
-    fs::utils::{
-        FileSystem, Inode, InodeIo, InodeMode, InodeType, Metadata, StatusFlags, SymbolicLink,
+    fs::{
+        notify::FsEventPublisher,
+        utils::{
+            FileSystem, Inode, InodeIo, InodeMode, InodeType, Metadata, StatusFlags, SymbolicLink,
+        },
     },
     prelude::*,
     process::{Gid, Uid},
@@ -97,6 +100,8 @@ impl<S: SymOps + 'static> Inode for ProcSym<S> {
     fn is_dentry_cacheable(&self) -> bool {
         !self.common.is_volatile()
     }
+
+    fn fs_event_publisher(&self) -> &FsEventPublisher;
 }
 
 pub trait SymOps: Sync + Send {

@@ -26,7 +26,10 @@ use crate::{
     fs::{
         exfat::{constants::*, inode::Ino},
         registry::{FsProperties, FsType},
-        utils::{CachePage, FileSystem, FsFlags, Inode, PageCache, PageCacheBackend, SuperBlock},
+        utils::{
+            CachePage, FileSystem, FsEventSubscriberStats, FsFlags, Inode, PageCache,
+            PageCacheBackend, SuperBlock,
+        },
     },
     prelude::*,
 };
@@ -39,6 +42,8 @@ pub struct ExfatFs {
     bitmap: Arc<Mutex<ExfatBitmap>>,
 
     upcase_table: Arc<SpinLock<ExfatUpcaseTable>>,
+
+    fs_event_subscriber_stats: FsEventSubscriberStats,
 
     mount_option: ExfatMountOptions,
     //Used for inode allocation.
@@ -72,6 +77,7 @@ impl ExfatFs {
             super_block,
             bitmap: Arc::new(Mutex::new(ExfatBitmap::default())),
             upcase_table: Arc::new(SpinLock::new(ExfatUpcaseTable::empty())),
+            fs_event_subscriber_stats: FsEventSubscriberStats::new(),
             mount_option,
             highest_inode_number: AtomicU64::new(EXFAT_ROOT_INO + 1),
             inodes: RwMutex::new(HashMap::new()),
@@ -416,6 +422,10 @@ impl FileSystem for ExfatFs {
 
     fn sb(&self) -> SuperBlock {
         SuperBlock::new(BOOT_SIGNATURE as u64, self.sector_size(), MAX_NAME_LENGTH)
+    }
+
+    fn fs_event_subscriber_stats(&self) -> &FsEventSubscriberStats {
+        &self.fs_event_subscriber_stats
     }
 }
 
