@@ -9,8 +9,10 @@ use ostd::mm::{Infallible, VmReader, VmWriter};
 use spin::Once;
 
 use super::{Tty, TtyDriver};
+
 use crate::{
     device::registry::char,
+    device::pty::PacketCtrl,
     events::IoEvents,
     fs::{
         inode_handle::FileIo,
@@ -60,6 +62,12 @@ impl TtyDriver for VtDriver {
     fn console(&self) -> Option<&dyn AnyConsoleDevice> {
         Some(&*self.console)
     }
+
+    fn packet_ctrl(&self) -> Option<&PacketCtrl> {
+        None
+    }
+
+    fn notify_events(&self, _events: IoEvents) {}
 }
 
 /// The driver for hypervisor console devices.
@@ -100,6 +108,12 @@ impl TtyDriver for HvcDriver {
     fn console(&self) -> Option<&dyn AnyConsoleDevice> {
         Some(&*self.console)
     }
+
+    fn packet_ctrl(&self) -> Option<&PacketCtrl> {
+        None
+    }
+
+    fn notify_events(&self, _events: IoEvents) {}
 }
 
 struct TtyFile<D>(Arc<Tty<D>>);
