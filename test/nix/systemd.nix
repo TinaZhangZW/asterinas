@@ -72,6 +72,12 @@ Type=oneshot
 ExecStart=/bin/true
 EOF
 
+      mkdir -p "$out/example/systemd/system/getty@.service.d"
+      cat > "$out/example/systemd/system/getty@.service.d/override.conf" <<'EOF'
+[Service]
+Restart=no
+EOF
+
     '';
   });
 in

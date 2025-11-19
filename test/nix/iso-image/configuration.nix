@@ -2,6 +2,7 @@
 let
   xfce = import ./xfce.nix { inherit pkgs; };
   xorg = import ./xorg.nix { inherit pkgs; };
+  runAsXfce = pkgs.writeScriptBin "run_as_xfce" (builtins.readFile ./run_as_xfce.sh);
 in
 {
   options = {
@@ -67,7 +68,7 @@ in
     i18n.supportedLocales = [ "en_US.UTF-8/UTF-8" ];
     environment.variables.LANG = "en_US.UTF-8";
 
-    systemd.defaultUnit = "multi-user.target";
+    systemd.defaultUnit = "graphical.target";
     systemd.package = pkgs.callPackage ./systemd.nix { };
     systemd.coredump.enable = false;
     services.timesyncd.enable = false;
@@ -79,7 +80,7 @@ in
       wantedBy = [ "graphical.target" ];
       serviceConfig = {
         Environment = "DISPLAY=:0";
-        ExecStart = "/run/current-system/sw/bin/run_as_xfce";
+        ExecStart = "${runAsXfce}/bin/run_as_xfce";
         StandardOutput = "tty";
         StandardError = "tty";
         KillMode = "process";
@@ -88,7 +89,13 @@ in
         Type = "simple";
       };
     };
-
+    networking.dhcpcd.enable = false;
+    systemd.services."resolvconf".serviceConfig = {
+      ExecStart = lib.mkForce "/bin/true";
+    };
+    systemd.services."network-setup".serviceConfig = {
+      ExecStart = lib.mkForce "/bin/true";
+    };
     systemd.services.systemd-random-seed = {
       enable = false;
     };
@@ -159,7 +166,7 @@ in
       pkgs.tali
       pkgs.gnome-chess
 
-      (pkgs.writeScriptBin "run_as_xfce" (builtins.readFile ./run_as_xfce.sh))
+      runAsXfce
       pkgs.vim
       pkgs.busybox
       pkgs.util-linux
