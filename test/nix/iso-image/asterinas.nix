@@ -26,13 +26,9 @@ in
       type = lib.types.path;
       default = ./splash.png;
     };
-    asterinas.xorg = lib.mkOption {
+    asterinas.overlay = lib.mkOption {
       type = lib.types.path;
-      default = ../xorg.nix;
-    };
-    asterinas.xfce = lib.mkOption {
-      type = lib.types.path;
-      default = ../xfce.nix;
+      default = ./overlay.nix;
     };
     asterinas.systemd = lib.mkOption {
       type = lib.types.path;
@@ -49,8 +45,7 @@ in
           cp -L ${config.asterinas.initramfs-init} $out/initramfs-init.sh
           cp -L ${config.asterinas.configuration} $out/configuration.nix
           cp -L ${config.asterinas.splash} $out/splash.png
-          cp -L ${config.asterinas.xorg} $out/xorg.nix
-          cp -L ${config.asterinas.xfce} $out/xfce.nix
+          cp -L ${config.asterinas.overlay} $out/overlay.nix
           cp -L ${config.asterinas.systemd} $out/systemd.nix
           if [ -e ${../patches} ]; then
             mkdir -p $out/patches
@@ -71,64 +66,8 @@ in
     environment.systemPackages = [
       (pkgs.writeScriptBin "install_asterinas"
         (builtins.readFile ./install-asterinas.sh))
-      # basic
-      pkgs.dbus
-      pkgs.hicolor-icon-theme
-      pkgs.evtest
-      pkgs.adwaita-icon-theme
-      pkgs.gdk-pixbuf
-      pkgs.gdk-pixbuf.dev
-      pkgs.gdk-pixbuf-xlib
-      pkgs.librsvg
-      pkgs.libjpeg
-      pkgs.libpng
-      pkgs.shared-mime-info
-      pkgs.dconf
-      pkgs.gsettings-desktop-schemas
-      pkgs.glib
-      pkgs.glib.bin
-      pkgs.glib-networking
-      # xfce
-      xfce.xfdesktop
-      xfce.xfwm4
-      pkgs.xfce.xfconf
-      pkgs.xfce.xfce4-panel
-      pkgs.xfce.thunar
-      pkgs.xfce.mousepad
-      pkgs.xfce.xfce4-appfinder
-      pkgs.xfce.xfce4-settings
-      pkgs.xfce.exo
-      pkgs.xfce.tumbler
-      pkgs.xfce.exo
-      pkgs.gvfs
-      pkgs.xfce.xfce4-session
-      pkgs.dconf.lib
-      # Xorg server and basic drivers
-      xorg.xtrans
-      xorg.xcbproto
-      xorg.xorgproto
-      xorg.libxcb
-      xorg.libx11
-      xorg.libevdev
-      xorg.evtest
-      xorg.xorgServer
-      pkgs.xorg.xf86videofbdev
-      pkgs.xorg.xf86inputevdev
-      pkgs.xorg.xkbcomp
-      pkgs.xkeyboard_config
-      pkgs.xorg.fontsunmisc
-      pkgs.xorg.libxkbfile
-      pkgs.xorg.xeyes
-      # GNOME Games
-      pkgs.gnome-mines
-      pkgs.gnome-sudoku
-      pkgs.five-or-more
-      pkgs.tali
-      pkgs.gnome-chess
 
       pkgs.vim
-      pkgs.busybox
-      pkgs.util-linux
     ];
 
     services.xserver.enable = false;

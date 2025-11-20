@@ -28,11 +28,8 @@ mount -o umask=077,sync,dirsync "${INSATLL_DEVICE}1" /mnt/boot
 
 mkdir -p /mnt/etc/nixos
 cp /asterinas/configuration.nix /mnt/etc/nixos/configuration.nix
-if [ -f /asterinas/xorg.nix ]; then
-    cp /asterinas/xorg.nix /mnt/etc/nixos/xorg.nix
-fi
-if [ -f /asterinas/xfce.nix ]; then
-    cp /asterinas/xfce.nix /mnt/etc/nixos/xfce.nix
+if [ -f /asterinas/overlay.nix ]; then
+    cp /asterinas/overlay.nix /mnt/etc/nixos/overlay.nix
 fi
 if [ -f /asterinas/systemd.nix ]; then
     cp /asterinas/systemd.nix /mnt/etc/nixos/systemd.nix

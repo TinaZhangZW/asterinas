@@ -71,7 +71,7 @@ export XDG_DATA_DIRS="/run/current-system/sw/share:/usr/share:/usr/local/share:$
 export GSETTINGS_SCHEMA_DIR="/run/current-system/sw/share/glib-2.0/schemas:/usr/share/glib-2.0/schemas:${GSETTINGS_SCHEMA_DIR:-}"
 
 # Step 2: run Xorg
-#cp /nix/store/9d13lbjjw4hb25wsp07s84d530zf5gz0-system-path/bin/xkbcomp /usr/bin/xkbcomp
+cp /nix/store/zznnq3j74hlgrqirbwc9hazbfmgqga7i-xkbcomp-1.4.7/bin/xkbcomp /usr/bin/xkbcomp
 MODULEPATH="$(dirname "$(command -v Xorg)")/../lib/xorg/modules"
 XKBDIR="/run/current-system/sw/share/X11/xkb"
 mkdir -p /run/current-system/sw/share/X11

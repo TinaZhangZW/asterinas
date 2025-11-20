@@ -1,7 +1,5 @@
 { config, lib, pkgs, ... }:
 let
-  xfce = import ./xfce.nix { inherit pkgs; };
-  xorg = import ./xorg.nix { inherit pkgs; };
   runAsXfce = pkgs.writeScriptBin "run_as_xfce" (builtins.readFile ./run_as_xfce.sh);
 in
 {
@@ -68,7 +66,12 @@ in
     i18n.supportedLocales = [ "en_US.UTF-8/UTF-8" ];
     environment.variables.LANG = "en_US.UTF-8";
 
-    systemd.defaultUnit = "graphical.target";
+    nixpkgs.overlays = [
+      (import ./overlay.nix)
+    ];
+    services.xserver.enable = true;
+    services.xserver.desktopManager.xfce.enable = true;
+
     systemd.package = pkgs.callPackage ./systemd.nix { };
     systemd.coredump.enable = false;
     services.timesyncd.enable = false;
@@ -90,87 +93,18 @@ in
       };
     };
     networking.dhcpcd.enable = false;
+    systemd.services."systemd-random-seed".enable = false;
     systemd.services."resolvconf".serviceConfig = {
       ExecStart = lib.mkForce "/bin/true";
     };
     systemd.services."network-setup".serviceConfig = {
       ExecStart = lib.mkForce "/bin/true";
     };
-    systemd.services.systemd-random-seed = {
-      enable = false;
-    };
 
-    environment.variables = {
-      XDG_DATA_DIRS = "/run/current-system/sw/share:/usr/share:/usr/local/share";
-      XDG_CONFIG_DIRS = "/etc/xdg:/run/current-system/sw/etc/xdg:/usr/local/etc/xdg";
-      GSETTINGS_SCHEMA_DIR = "/run/current-system/sw/share/glib-2.0/schemas:/usr/share/glib-2.0/schemas";
-    };
-    environment.sessionVariables = lib.mkForce {
-      XDG_DATA_DIRS = "/run/current-system/sw/share:/usr/share:/usr/local/share";
-      XDG_CONFIG_DIRS = "/etc/xdg:/run/current-system/sw/etc/xdg:/usr/local/etc/xdg";
-      GSETTINGS_SCHEMA_DIR = "/run/current-system/sw/share/glib-2.0/schemas:/usr/share/glib-2.0/schemas";
-    };
-    environment.etc."X11/xorg.conf.d/10-fbdev.conf".source = ./patches/xorgServer/10-fbdev.conf;
     environment.systemPackages = [
-      # basic
-      pkgs.dbus
-      pkgs.hicolor-icon-theme
-      pkgs.evtest
-      pkgs.adwaita-icon-theme
-      pkgs.gdk-pixbuf
-      pkgs.gdk-pixbuf.dev
-      pkgs.gdk-pixbuf-xlib
-      pkgs.librsvg
-      pkgs.libjpeg
-      pkgs.libpng
-      pkgs.shared-mime-info
-      pkgs.dconf
-      pkgs.gsettings-desktop-schemas
-      pkgs.glib
-      pkgs.glib.bin
-      pkgs.glib-networking
-      # xfce
-      xfce.xfdesktop
-      xfce.xfwm4
-      pkgs.xfce.xfconf
-      pkgs.xfce.xfce4-panel
-      pkgs.xfce.thunar
-      pkgs.xfce.mousepad
-      pkgs.xfce.xfce4-appfinder
-      pkgs.xfce.xfce4-settings
-      pkgs.xfce.exo
-      pkgs.xfce.tumbler
-      pkgs.gvfs
-      pkgs.xfce.xfce4-session
-      pkgs.dconf.lib
-      # Xorg server and basic drivers
-      xorg.xtrans
-      xorg.xcbproto
-      xorg.xorgproto
-      xorg.libxcb
-      xorg.libx11
-      xorg.libevdev
-      xorg.evtest
-      xorg.xorgServer
       pkgs.xorg.xf86videofbdev
-      pkgs.xorg.xf86inputevdev
-      pkgs.xorg.xkbcomp
-      pkgs.xkeyboard_config
-      pkgs.xorg.fontsunmisc
-      pkgs.xorg.libxkbfile
-      pkgs.xorg.xeyes
-      # GNOME Games
-      pkgs.gnome-mines
-      pkgs.gnome-sudoku
-      pkgs.five-or-more
-      pkgs.tali
-      pkgs.gnome-chess
-
       runAsXfce
       pkgs.vim
-      pkgs.busybox
-      pkgs.util-linux
-      pkgs.bash
     ];
 
     services.getty.autologinUser = "root";
