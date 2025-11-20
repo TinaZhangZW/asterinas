@@ -192,7 +192,7 @@ impl Mount {
             let old_children = old_mount.children.read();
             for old_child_mount in old_children.values() {
                 let mountpoint = old_child_mount.mountpoint().unwrap();
-                if !mountpoint.is_descendant_of(old_mount.root_dentry()) {
+                if !mountpoint.is_equal_or_descendant_of(old_mount.root_dentry()) {
                     continue;
                 }
                 let new_child_mount =
