@@ -4,7 +4,7 @@ use super::SyscallReturn;
 use crate::{
     fs::file_table::{get_file_fast, FileDesc},
     prelude::*,
-    util::net::{new_raw_socket_option, CSocketOptionLevel},
+    util::net::{new_raw_socket_option, CSocketOptionLevel, DummyOption},
 };
 
 pub fn sys_getsockopt(
@@ -31,6 +31,10 @@ pub fn sys_getsockopt(
 
     let mut raw_option = new_raw_socket_option(level, optname)?;
     debug!("raw option: {:?}", raw_option);
+
+    if raw_option.as_any().downcast_ref::<DummyOption>().is_some() {
+        return Ok(SyscallReturn::Return(0));
+    }
 
     socket.get_option(raw_option.as_sock_option_mut())?;
 

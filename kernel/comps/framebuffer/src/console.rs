@@ -39,6 +39,7 @@ pub(crate) fn init() {
 
 impl AnyConsoleDevice for FramebufferConsole {
     fn send(&self, buf: &[u8]) {
+        return;
         let mut inner = self.inner.lock();
         let (state, esc_fsm) = &mut *inner;
 

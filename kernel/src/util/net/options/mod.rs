@@ -190,3 +190,40 @@ pub enum CSocketOptionLevel {
     SOL_RAW = 255,
     SOL_NETLINK = 270,
 }
+
+#[derive(Debug)]
+pub struct DummyOption;
+
+impl DummyOption {
+    pub fn new() -> Self {
+        DummyOption
+    }
+}
+
+impl SocketOption for DummyOption {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+impl RawSocketOption for DummyOption {
+    fn read_from_user(&mut self, _addr: Vaddr, _max_len: u32) -> Result<()> {
+        Ok(())
+    }
+
+    fn write_to_user(&self, _addr: Vaddr, _max_len: &mut u32) -> Result<usize> {
+        Ok(0)
+    }
+
+    fn as_sock_option_mut(&mut self) -> &mut dyn SocketOption {
+        self
+    }
+
+    fn as_sock_option(&self) -> &dyn SocketOption {
+        self
+    }
+}

@@ -7,7 +7,7 @@ use crate::{
     impl_raw_socket_option,
     net::socket::ip::options::{Hdrincl, Tos, Ttl},
     prelude::*,
-    util::net::options::SocketOption,
+    util::net::options::{DummyOption, SocketOption},
 };
 
 /// Socket options for IP socket.
@@ -72,6 +72,7 @@ pub fn new_ip_option(name: i32) -> Result<Box<dyn RawSocketOption>> {
         CIpOptionName::TOS => Ok(Box::new(Tos::new())),
         CIpOptionName::TTL => Ok(Box::new(Ttl::new())),
         CIpOptionName::HDRINCL => Ok(Box::new(Hdrincl::new())),
+        CIpOptionName::RECVERR => Ok(Box::new(DummyOption::new())),
         _ => return_errno_with_message!(Errno::ENOPROTOOPT, "unsupported ip level option"),
     }
 }

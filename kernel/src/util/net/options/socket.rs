@@ -9,6 +9,7 @@ use crate::{
     },
     prelude::*,
     process::Gid,
+    util::net::DummyOption,
 };
 
 /// Socket level options.
@@ -50,6 +51,7 @@ enum CSocketOptionName {
 pub fn new_socket_option(name: i32) -> Result<Box<dyn RawSocketOption>> {
     let name = CSocketOptionName::try_from(name).map_err(|_| Errno::ENOPROTOOPT)?;
     match name {
+        CSocketOptionName::BROADCAST => Ok(Box::new(DummyOption::new())),
         CSocketOptionName::SNDBUF => Ok(Box::new(SendBuf::new())),
         CSocketOptionName::RCVBUF => Ok(Box::new(RecvBuf::new())),
         CSocketOptionName::REUSEADDR => Ok(Box::new(ReuseAddr::new())),
