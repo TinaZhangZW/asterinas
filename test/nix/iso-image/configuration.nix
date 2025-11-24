@@ -74,6 +74,7 @@ in
 
     systemd.package = pkgs.callPackage ./systemd.nix { };
     systemd.coredump.enable = false;
+    systemd.services.systemd-tmpfiles-setup.enable = false;
     services.timesyncd.enable = false;
     systemd.oomd.enable = false;
     services.udev.enable = false;

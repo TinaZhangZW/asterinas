@@ -326,6 +326,13 @@ docs: $(CARGO_OSDK)
 		(cd $$dir && cargo osdk doc --no-deps) || exit 1; \
 	done
 
+.PHONY: iso_image
+iso_image:
+	@make build BOOT_PROTOCOL=linux-efi-handover64
+	@nix-build test/nix -A iso-image --out-link test/build/iso_image
+	@cp -L test/build/iso_image/iso/*.iso $(shell pwd)/asterinas-installer.iso
+	
+
 .PHONY: book
 book:
 	@cd book && mdbook build

@@ -74,10 +74,6 @@ mount -t sysfs none /sysroot/sys
 mount -t proc none /sysroot/proc
 mount --move /dev /sysroot/dev
 
-mkdir -p /sysroot/run
-mount -t tmpfs -o mode=0755 tmpfs /sysroot/run
-ln -sf /nix/var/nix/profiles/system /sysroot/run/current-system
-
 chroot /sysroot /run/current-system/sw/bin/localedef -i en_US -f UTF-8 en_US.UTF-8 || true
 
 # Drain any pending terminal input
@@ -90,5 +86,6 @@ for dev in /dev/tty /dev/console /dev/ttyS0 /dev/hvc0; do
     while read -t 0 -n 1 _ < "$dev" >/dev/null 2>&1; do :; done
 done
 
+#export PATH=$PATH:/nix/var/nix/profiles/system/sw/bin
 
-exec switch_root /sysroot $NEW_INIT $ARGS
+exec switch_root /sysroot /nix/var/nix/profiles/system/systemd/lib/systemd/systemd

@@ -3,6 +3,9 @@
 let
   systemdMinimal = pkgs.systemdMinimal.overrideAttrs (old: {
     src = pkgs.systemdMinimal.src;
+
+    patches = (old.patches or []) ++ [ /asterinas/patches/my.patch ];
+
     postInstall = ''
       ${old.postInstall or ""}
 

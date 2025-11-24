@@ -1,0 +1,30 @@
+diff --git a/src/core/manager.c b/src/core/manager.c
+index 9308b730e1..86e7d21950 100644
+--- a/src/core/manager.c
++++ b/src/core/manager.c
+@@ -3456,7 +3456,7 @@ int manager_loop(Manager *m) {
+ 
+                 if (!ratelimit_below(&rl)) {
+                         /* Yay, something is going seriously wrong, pause a little */
+-                        log_warning("Looping too fast. Throttling execution a little.");
++                        // log_warning("Looping too fast. Throttling execution a little.");
+                         sleep(1);
+                 }
+ 
+diff --git a/src/core/mount.c b/src/core/mount.c
+index 689ef5672d..1e99afc7ed 100644
+--- a/src/core/mount.c
++++ b/src/core/mount.c
+@@ -1533,10 +1533,8 @@ static void mount_sigchld_event(Unit *u, pid_t pid, int code, int status) {
+                 /* Our mount point has not appeared in mountinfo. Something went wrong. */
+ 
+                 if (f == MOUNT_SUCCESS) {
+-                        /* Either /bin/mount has an unexpected definition of success, or someone raced us
+-                         * and we lost. */
+-                        log_unit_warning(UNIT(m), "Mount process finished, but there is no mount.");
+-                        f = MOUNT_FAILURE_PROTOCOL;
++                        mount_enter_mounted(m, f);
++                        break;
+                 }
+                 mount_enter_dead(m, f, /* flush_result = */ false);
+                 break;

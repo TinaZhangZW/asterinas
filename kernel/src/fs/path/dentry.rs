@@ -67,6 +67,27 @@ impl Dentry {
         self.type_
     }
 
+        /// Gets the absolute path name of this `Dentry` within the filesystem.
+    pub(super) fn path_name(&self) -> String {
+        let mut path_name = self.name().to_string();
+        let mut current_dir = self.this();
+
+        while let Some(parent_dir) = current_dir.parent() {
+            path_name = {
+                let parent_name = parent_dir.name();
+                if parent_name != "/" {
+                    parent_name + "/" + &path_name
+                } else {
+                    parent_name + &path_name
+                }
+            };
+            current_dir = parent_dir;
+        }
+
+        debug_assert!(path_name.starts_with('/'));
+        path_name
+    }
+
     /// Gets the name of the `Dentry`.
     ///
     /// Returns "/" if it is a root `Dentry`.
@@ -114,6 +135,9 @@ impl Dentry {
     /// Checks if this dentry is a descendant (child, grandchild, or
     /// great-grandchild, etc.) of another dentry.
     pub(super) fn is_descendant_of(&self, ancestor: &Arc<Self>) -> bool {
+        if Arc::ptr_eq(&self.this(), ancestor) {
+            return true;
+        }
         let mut parent = self.parent();
         while let Some(p) = parent {
             if Arc::ptr_eq(&p, ancestor) {
