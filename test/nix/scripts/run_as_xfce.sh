@@ -68,5 +68,10 @@ done
 xfdesktop --enable-debug > ~/xfdesktop.log 2>&1 & echo $! > /run/xfdesktop.pid &
 #strace -o xfdesktop_strace.log /usr/bin/xfdesktop --enable-debug > ~/xfdesktop.log 2>&1 &
 
+# Ensure a file manager service is present for launching desktop entries
+if command -v thunar >/dev/null 2>&1; then
+  thunar --daemon > ~/thunar.log 2>&1 & echo $! > "$RUNTIME_DIR/thunar.pid" &
+fi
+
 #Step 5: run xfce4-panel
 xfce4-panel > ~/xfce4-panel.log 2>&1 & echo $! > "$RUNTIME_DIR/xfce4-panel.pid" &

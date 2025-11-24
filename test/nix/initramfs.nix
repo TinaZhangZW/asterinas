@@ -355,7 +355,7 @@ EOF
       mkdir -p $out/root/Documents
       cp ${./files/CortenMM_ZGC.pdf} $out/root/Documents/CortenMM_ZGC.pdf
       cp ${./files/sample-aster.pdf} $out/root/Documents/sample-aster.pdf
-      cp ${./files/Asterinas_Introduction.pdf} $out/root/Documents/Asterinas_Introduction.pdf
+      # cp ${./files/Asterinas_Introduction.pdf} $out/root/Documents/Asterinas_Introduction.pdf
 
       # Create desktop shortcut for the PDF
       mkdir -p $out/root/Desktop
@@ -546,6 +546,14 @@ EOF
           mkdir -p "$hicolor_base/symbolic/apps"
           cp ${pkgs.hicolor-icon-theme}/share/icons/hicolor/index.theme $out/usr/share/icons/hicolor
       ''}
+
+      # Adding short-cuts to desktop
+      mkdir -p $out/Desktop
+      cp $out/usr/share/applications/org.gnome.Tali.desktop $out/Desktop/
+      cp $out/usr/share/applications/org.gnome.Chess.desktop $out/Desktop/
+      cp $out/usr/share/applications/org.gnome.Sudoku.desktop $out/Desktop/
+      cp $out/usr/share/applications/org.gnome.five-or-more.desktop $out/Desktop/
+      cp $out/usr/share/applications/org.gnome.Mines.desktop $out/Desktop/
       cp $out/usr/share/applications/galculator.desktop $out/Desktop/
     ''}
 
