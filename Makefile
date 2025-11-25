@@ -307,6 +307,12 @@ profile_client: initramfs $(CARGO_OSDK)
 	@cd kernel && cargo osdk profile $(CARGO_OSDK_BUILD_ARGS) --remote :$(GDB_TCP_PORT) \
 		--samples $(GDB_PROFILE_COUNT) --interval $(GDB_PROFILE_INTERVAL) --format $(GDB_PROFILE_FORMAT)
 
+.PHONY: iso_image
+iso_image:
+	@make build BOOT_PROTOCOL=linux-efi-handover64
+	@nix-build test/nix -A iso-image --out-link test/build/iso_image
+	@cp -L test/build/iso_image/iso/*.iso $(shell pwd)/asterinas-installer.iso
+
 .PHONY: test
 test:
 	@for dir in $(NON_OSDK_CRATES); do \
