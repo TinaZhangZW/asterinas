@@ -70,6 +70,9 @@
       ln -s ${config.asterinas.initramfs}/initrd $out/initrd
     '';
 
+    services.xserver.enable = true;
+    services.xserver.desktopManager.xfce.enable = true;
+
     nix.settings = {
       filter-syscalls = false;
       require-sigs = false;
