@@ -11,17 +11,22 @@ fi
 XKB_DATA="/run/current-system/sw/share/X11/xkb"
 MODULE_PATH="/run/current-system/sw/lib/xorg/modules"
 
-Xorg :0 \
+nohup Xorg :0 \
   -modulepath "$MODULE_PATH" \
   -xkbdir "$XKB_DATA" \
-  -logverbose 6 \
-  -logfile /var/xorg_debug.log \
+  -logverbose 0 \
+  -logfile /var/log/xorg_debug.log \
   -novtswitch \
   -keeptty \
   -keyboard keyboard \
-  -pointer mouse0 &
+  -pointer mouse0 \
+  > /var/log/xorg.log 2>&1 &
 
 
 # Step 3: run xfce4
 export DISPLAY=:0
-xfce4-session &
+LOG=/var/log/xfce-session.log
+mkdir -p "$(dirname "$LOG")"
+: > "$LOG"                 # truncate/create
+chmod 600 "$LOG"
+nohup xfce4-session >>"$LOG" 2>&1 &
