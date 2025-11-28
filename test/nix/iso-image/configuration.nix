@@ -59,6 +59,7 @@
       echo "Executing postBootCommands..."
       echo "nameserver 30.64.127.127" > /etc/resolv.conf
       PATH=$PATH:/nix/var/nix/profiles/system/sw/bin:~/.nix-profile/bin
+      su - root
       ${pkgs.bash}/bin/sh
     '';
     system.systemBuilderCommands = ''
