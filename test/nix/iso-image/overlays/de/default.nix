@@ -51,10 +51,6 @@ self: super:
 
     xfdesktop = super.xfce.xfdesktop.overrideAttrs (oldAttrs: {
       version = "4.16.0";
-      patches = (oldAttrs.patches or []) ++ [
-        ./patches/xfdesktop4/0001-Fix-not-using-consistent-monitor-identifiers.patch
-        ./patches/xfdesktop4/0001-Hardcode-thuna-as-the-filesystem-manager.patch
-      ];
     });
   };
 }

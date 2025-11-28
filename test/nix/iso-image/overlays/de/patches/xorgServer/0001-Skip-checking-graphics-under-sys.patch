@@ -3,6 +3,9 @@ From: Wei Zhang <ruoyuan.zw@antgroup.com>
 Date: Wed, 7 May 2025 05:34:47 +0000
 Subject: [PATCH] Skip checking graphics under sys
 
+The sys filesystem support is on the way. Right now, we skip the checking
+to avoid fbdev driver failing to work.
+
 Signed-off-by: Wei Zhang <ruoyuan.zw@antgroup.com>
 ---
  hw/xfree86/fbdevhw/fbdevhw.c | 4 ++--
