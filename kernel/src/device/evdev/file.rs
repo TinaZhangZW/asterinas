@@ -107,6 +107,24 @@ enum EvdevClock {
     Boottime = 2,
 }
 
+impl TryFrom<ClockId> for EvdevClock {
+    type Error = Error;
+
+    fn try_from(value: ClockId) -> Result<Self> {
+        match value {
+            ClockId::CLOCK_REALTIME | ClockId::CLOCK_REALTIME_COARSE => Ok(EvdevClock::Realtime),
+            ClockId::CLOCK_MONOTONIC | ClockId::CLOCK_MONOTONIC_RAW | ClockId::CLOCK_MONOTONIC_COARSE => {
+                Ok(EvdevClock::Monotonic)
+            }
+            ClockId::CLOCK_BOOTTIME => Ok(EvdevClock::Boottime),
+            _ => Err(Error::with_message(
+                Errno::EINVAL,
+                "clock id not supported for evdev",
+            )),
+        }
+    }
+}
+
 impl From<EvdevClock> for u8 {
     fn from(value: EvdevClock) -> Self {
         value as _
@@ -413,21 +431,10 @@ impl EvdevFile {
                 let clock_id_raw: i32 = current_userspace!().read_val(arg)?;
                 let clock_id = ClockId::try_from(clock_id_raw)
                     .map_err(|_| Error::with_message(Errno::EINVAL, "invalid clock id"))?;
-                let supported = matches!(
-                    clock_id,
-                    ClockId::CLOCK_REALTIME
-                        | ClockId::CLOCK_MONOTONIC
-                        | ClockId::CLOCK_MONOTONIC_RAW
-                        | ClockId::CLOCK_REALTIME_COARSE
-                        | ClockId::CLOCK_MONOTONIC_COARSE
-                        | ClockId::CLOCK_BOOTTIME
-                        | ClockId::CLOCK_PROCESS_CPUTIME_ID
-                        | ClockId::CLOCK_THREAD_CPUTIME_ID
-                );
-                if !supported {
-                    return_errno_with_message!(Errno::EINVAL, "clock id not supported");
-                }
-                self.clock_id.store(clock_id, Ordering::Relaxed);
+
+                let evdev_clock = EvdevClock::try_from(clock_id)?;
+
+                self.inner.clock_id.store(evdev_clock, Ordering::Relaxed);
             }
             None => {
                 return Err(Error::with_message(
