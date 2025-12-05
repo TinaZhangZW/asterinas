@@ -72,6 +72,7 @@ let
          pkgs.xgalagapp
          pkgs.xboard
          pkgs.lbreakout2
+         pkgs.fairymax
          pkgs.galculator
        ];
 
@@ -445,6 +446,10 @@ EOF
       # XBoard chess frontend
       xboard_mappings="bin:$out/usr/bin share:$out/usr/share"
       process_package_mappings "${pkgs.xboard}" "$xboard_mappings" "XBoard"
+
+      # Fairymax
+      fairymax_mappings="bin:$out/usr/bin share:$out/usr/share"
+      process_package_mappings "${pkgs.fairymax}" "$fairymax_mappings" "Fairymax"
 
       # LBreakout2 brick breaker
       lbreakout2_mappings="bin:$out/usr/bin share:$out/usr/share"
