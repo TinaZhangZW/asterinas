@@ -208,6 +208,9 @@ in stdenvNoCC.mkDerivation {
 
     # Copies the contents of the /etc
     cp -r ${etc}/* $out/etc/
+    cat > $out/etc/issue << 'EOF'
+<<< Welcome to Asterinas NixOS 25.05.813221.9a7b80b6f82a (\m) - \l >>>
+EOF
 
     cp ${resolv_conf}/resolv.conf $out/etc/
 
