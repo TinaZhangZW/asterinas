@@ -663,22 +663,22 @@ EOF
 
       # Adding short-cuts to desktop
       mkdir -p $out/Desktop
-      cp $out/usr/share/applications/org.gnome.Tali.desktop $out/Desktop/
-      cp $out/usr/share/applications/org.gnome.Chess.desktop $out/Desktop/
-      cp $out/usr/share/applications/org.gnome.Sudoku.desktop $out/Desktop/
-      cp $out/usr/share/applications/org.gnome.five-or-more.desktop $out/Desktop/
-      cp $out/usr/share/applications/org.gnome.Mines.desktop $out/Desktop/
-      cp $out/usr/share/applications/galculator.desktop $out/Desktop/
+      cp $out/usr/share/applications/org.gnome.Tali.desktop $out/root/Desktop/
+      cp $out/usr/share/applications/org.gnome.Chess.desktop $out/root/Desktop/
+      cp $out/usr/share/applications/org.gnome.Sudoku.desktop $out/root/Desktop/
+      cp $out/usr/share/applications/org.gnome.five-or-more.desktop $out/root/Desktop/
+      cp $out/usr/share/applications/org.gnome.Mines.desktop $out/root/Desktop/
+      cp $out/usr/share/applications/galculator.desktop $out/root/Desktop/
       extra_game_desktops="xgalaga.desktop xgalaga++.desktop xboard.desktop lbreakout2.desktop"
       for game_desktop in $extra_game_desktops; do
         if [ -f "$out/usr/share/applications/$game_desktop" ]; then
-          cp "$out/usr/share/applications/$game_desktop" $out/Desktop/
+          cp "$out/usr/share/applications/$game_desktop" $out/root/Desktop/
         fi
       done
-      if [ ! -e "$out/Desktop/xgalaga.desktop" ] && [ ! -e "$out/Desktop/xgalaga++.desktop" ]; then
+      if [ ! -e "$out/root/Desktop/xgalaga.desktop" ] && [ ! -e "$out/root/Desktop/xgalaga++.desktop" ]; then
         xgalaga_fallback="$(find "$out/usr/share/applications" -maxdepth 1 -type f \( -name '*xgalaga*.desktop' -o -name '*XGalaga*.desktop' \) | head -n 1)"
         if [ -n "$xgalaga_fallback" ]; then
-          cp "$xgalaga_fallback" $out/Desktop/
+          cp "$xgalaga_fallback" $out/root/Desktop/
         fi
       fi
 
