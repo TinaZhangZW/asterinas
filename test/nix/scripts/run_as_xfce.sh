@@ -6,6 +6,8 @@ export PATH="/run/current-system/sw/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 # Relax permissions for desktop launchers when present
 chmod a+rw /Desktop/*.desktop 2>/dev/null || true
 
+HOME=/root
+
 # Select a writable directory for runtime state and PID files
 RUNTIME_DIR=/run
 if ! (mkdir -p "$RUNTIME_DIR" >/dev/null 2>&1 && : > "$RUNTIME_DIR/.xfce-write-test" 2>/dev/null); then
