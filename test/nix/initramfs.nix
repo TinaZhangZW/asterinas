@@ -363,6 +363,31 @@ EOF
       settings_mappings="bin:$out/usr/bin etc:$out/etc share:$out/usr/share"
       process_package_mappings "${pkgs.xfce.xfce4-settings}" "$settings_mappings" "XFCE4-Settings"
 
+      rm $out/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml
+      cat > $out/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xsettings" version="1.0">
+  <property name="Net" type="empty">
+    <property name="ThemeName" type="string" value="Adwaita"/>
+    <property name="IconThemeName" type="string" value="Adwaita"/>
+  </property>
+  <property name="Xft" type="empty">
+    <property name="DPI" type="int" value="-1"/>
+    <property name="Antialias" type="int" value="1"/>
+    <property name="Hinting" type="int" value="1"/>
+    <property name="HintStyle" type="string" value="hintfull"/>
+    <property name="RGBA" type="string" value="rgb"/>
+  </property>
+  <property name="Gtk" type="empty">
+    <property name="FontName" type="string" value="Sans 14"/>
+    <property name="MonospaceFontName" type="string" value="Monospace 14"/>
+    <property name="CursorThemeName" type="string" value="Adwaita"/>
+    <property name="CursorThemeSize" type="int" value="24"/>
+    <property name="DecorationLayout" type="string" value="icon,menu:minimize,maximize,close"/>
+  </property>
+</channel>
+EOF
+
       # XFCE4 Terminal
       terminal_mappings="bin:$out/usr/bin share:$out/usr/share"
       process_package_mappings "${pkgs.xfce.xfce4-terminal}" "$terminal_mappings" "XFCE4-Terminal"
@@ -503,7 +528,7 @@ EOF
 [Settings]
 gtk-icon-theme-name=Adwaita
 gtk-theme-name=Adwaita
-gtk-font-name=Sans 10
+gtk-font-name=Sans 14
 gtk-cursor-theme-name=Adwaita
 gtk-cursor-theme-size=24
 gtk-toolbar-style=GTK_TOOLBAR_BOTH_HORIZ
@@ -515,6 +540,10 @@ gtk-enable-input-feedback-sounds=1
 gtk-xft-antialias=1
 gtk-xft-hinting=1
 gtk-xft-hintstyle=hintfull
+EOF
+      mkdir -p $out/etc/gtk-2.0
+      cat > $out/etc/gtk-2.0/gtkrc << 'EOF'
+gtk-font-name = "Sans 14"
 EOF
       # Install GDK-Pixbuf utilities
       gdkpixbuf_mappings="bin:$out/usr/bin share:$out/usr/share"
