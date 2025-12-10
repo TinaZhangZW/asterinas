@@ -12,8 +12,8 @@
   networking.hostName = "asterinas"; # Define your hostname.
 
   # Uncomment the two options below to enable the X11 (X.Org) desktop (XFCE).
-  # services.xserver.enable = true;
-  # services.xserver.desktopManager.xfce.enable = true;
+  services.xserver.enable = true;
+  services.xserver.desktopManager.xfce.enable = true;
 
   # Uncomment the following line to enable Podman.
   # virtualisation.podman.enable = true;

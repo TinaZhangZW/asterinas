@@ -63,6 +63,7 @@ in {
   '';
   system.activationScripts.modprobe = lib.mkForce "";
 
+  asterinas.docs.enable = true;
   nix.settings = {
     filter-syscalls = false;
     require-sigs = false;

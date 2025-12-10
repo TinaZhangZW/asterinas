@@ -78,7 +78,7 @@ COMMON_QEMU_ARGS="\
     -m ${MEM:-8G} \
     --no-reboot \
     -nographic \
-    -display vnc=0.0.0.0:${VNC_PORT:-42} \
+    -display vnc=0.0.0.0:${VNC_PORT:-68} \
     -serial chardev:mux \
     -monitor chardev:mux \
     -chardev stdio,id=mux,mux=on,signal=off,logfile=qemu.log \
@@ -104,6 +104,7 @@ fi
 
 QEMU_ARGS="\
     $COMMON_QEMU_ARGS \
+    -device VGA,xres=1920,yres=1200 \
     -machine q35,kernel-irqchip=split \
     -device virtio-blk-pci,bus=pcie.0,addr=0x6,drive=x0,serial=vext2,disable-legacy=on,disable-modern=off,queue-size=64,num-queues=1,request-merging=off,backend_defaults=off,discard=off,write-zeroes=off,event_idx=off,indirect_desc=off,queue_reset=off$IOMMU_DEV_EXTRA \
     -device virtio-blk-pci,bus=pcie.0,addr=0x7,drive=x1,serial=vexfat,disable-legacy=on,disable-modern=off,queue-size=64,num-queues=1,request-merging=off,backend_defaults=off,discard=off,write-zeroes=off,event_idx=off,indirect_desc=off,queue_reset=off$IOMMU_DEV_EXTRA \

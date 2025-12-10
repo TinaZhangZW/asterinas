@@ -22,6 +22,7 @@
     ./modules/xfce/default.nix
     ./modules/container.nix
     ./modules/systemd.nix
+    ./modules/docs.nix
   ];
 
   # Overlays provide patches to 'nixpkgs' that enable these packages to run effectively on AsterNixOS.
@@ -33,5 +34,6 @@
     (import ./overlays/podman/default.nix)
     (import ./overlays/systemd/default.nix)
     (import ./overlays/switch-to-configuration-ng/default.nix)
+    (import ./overlays/docs/default.nix)
   ];
 }
