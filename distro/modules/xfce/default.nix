@@ -15,6 +15,7 @@ in {
       description = "XFCE Desktop Environment";
       after = [ "getty.target" ];
       wantedBy = [ "multi-user.target" ];
+      conflicts = [ "getty@tty1.service" ];
       serviceConfig = {
         Environment = "DISPLAY=:0";
         ExecStart = "${startXfce}/bin/start_xfce";
