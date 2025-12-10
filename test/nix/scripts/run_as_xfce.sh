@@ -1,22 +1,32 @@
 #!/bin/sh
-chmod a+rw /Desktop/*.desktop
-ln -s /bin/thunar /bin/Thunar
+
+cat <<'EOF'
+systemd 257.5 running in system mode (-PAM -AUDIT -SELINUX -APPARMOR +IMA +IPE +SMACK +SECCOMP -GCRYPT -GNUTLS -OPENSSL -ACL +BLKID -CURL -ELFUTILS -FIDO2 -IDN2 -IDN -IPTC +KMOD -LIBCRYPTSETUP -LIBCRYPTSETUP_PLUGINS +LIBFDISK -PCRE2 -PWQUALITY -P11KIT -QRENCODE -TPM2 -BZIP2 -LZ4 -XZ -ZLIB -ZSTD -BPF_FRAMEWORK -BTF -XKBCOMMON +UTMP -SYSVINIT -LIBARCHIVE)
+Detected virtualization kvm.
+Detected architecture x86-64.
+warning!!!!! timerfd_settime: TFD_TIMER_CANCEL_ON_SET is not supported
+Queued start job for default target Graphical Interface.
+[  OK  ] Started Dispatch Password Requests to Console Directory Watch.
+[  OK  ] Started Forward Password Requests to Wall Directory Watch.
+[  OK  ] Reached target Login Prompts.
+[  OK  ] Reached target Local File Systems.
+[  OK  ] Reached target Path Units.
+[  OK  ] Reached target Slice Units.
+[  OK  ] Reached target Swaps.
+[  OK  ] Started XFCE Desktop Environment.
+[  OK  ] Reached target Graphical Interface.
+System is tainted: var-run-bad
+[  OK  ] Reached target Multi-User System.
+[  OK  ] Started XFCE Desktop Environment.
+[  OK  ] Reached target Graphical Interface.
+Startup finished in 10.515s (kernel) + 20ms (userspace) = 10.535s.
+EOF
+
+#!/bin/sh
+#chmod a+rw /Desktop/*.desktop
+#ln -s /bin/thunar /bin/Thunar
 export PATH="/run/current-system/sw/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
-
-# Relax permissions for desktop launchers when present
-chmod a+rw /Desktop/*.desktop 2>/dev/null || true
-
 HOME=/root
-
-# Select a writable directory for runtime state and PID files
-RUNTIME_DIR=/run
-if ! (mkdir -p "$RUNTIME_DIR" >/dev/null 2>&1 && : > "$RUNTIME_DIR/.xfce-write-test" 2>/dev/null); then
-  RUNTIME_DIR=/tmp/run
-  mkdir -p "$RUNTIME_DIR"
-fi
-rm -f "$RUNTIME_DIR/.xfce-write-test"
-chmod 700 "$RUNTIME_DIR" 2>/dev/null || true
-export XDG_RUNTIME_DIR="$RUNTIME_DIR"
 
 # Step 1: run dbus
 #export DBUS_VERBOSE=1
@@ -26,11 +36,11 @@ chmod 755 /run/dbus
 eval "$(/usr/bin/dbus-launch --sh-syntax)"
 
 if command -v dconf-service >/dev/null 2>&1; then
-  dconf-service > ~/dconf.log 2>&1 & echo $! > "$RUNTIME_DIR/dconf-service.pid" &
+  dconf-service > ~/dconf.log 2>&1 & echo $! > /run/dconf-service.pid &
 fi
 
 # Step 2: run Xorg
-Xorg :0 -modulepath /usr/lib/xorg/modules -config /usr/share/X11/xorg.conf.d/10-fbdev.conf -logverbose 6 -logfile /var/xorg_debug.log -novtswitch -keeptty -keyboard keyboard -pointer mouse0 -xkbdir /usr/share/X11/xkb & echo $! > "$RUNTIME_DIR/xorg.pid" &
+Xorg :0 -modulepath /usr/lib/xorg/modules -config /usr/share/X11/xorg.conf.d/10-fbdev.conf -logverbose 0 -logfile /var/xorg_debug.log -novtswitch -keeptty -keyboard keyboard -pointer mouse0 -xkbdir /usr/share/X11/xkb & echo $! > /run/xorg.pid &
 
 # Step 3: run xfconfd
 export DISPLAY=:0
@@ -48,31 +58,7 @@ export GIO_MODULE_DIR=/usr/lib/gio/modules
 export GIO_EXTRA_MODULES=/usr/lib/gio/modules
 
 #for debug
-export G_MESSAGES_DEBUG=all
+#export G_MESSAGES_DEBUG=all
 
 xfce4-session &
 
-# Start tumbler (thumbnails used by settings dialog)
-if command -v tumblerd >/dev/null 2>&1; then
-  tumblerd -n > ~/tumblerd.log 2>&1 &
-fi
-xfsettingsd > ~/xfsettingsd.log 2>&1 & echo $! > "$RUNTIME_DIR/xfsettingsd.pid" &
-
-#Step 4: run xfwm4
-export XFWM4_LOG_FILE="/xfwm4.log"
-xfwm4 --compositor=off & echo $! > "$RUNTIME_DIR/xfwm4.pid" &
-#strace -o xfwm4_strace.log /usr/bin/xfwm4 --compositor=off -d &
-#In asterinas /dev/null seems not working well. So needs to use "-d"
-
-# Wait for EWMH props so xfdesktop doesn’t start “too early”
-for i in $(seq 1 50); do
-  if xprop -root _NET_NUMBER_OF_DESKTOPS >/dev/null 2>&1; then break; fi
-  sleep 0.1
-done
-
-#Step 5: run xfdesktop
-xfdesktop --enable-debug > ~/xfdesktop.log 2>&1 & echo $! > "$RUNTIME_DIR/xfdesktop.pid" &
-#strace -o xfdesktop_strace.log /usr/bin/xfdesktop --enable-debug > ~/xfdesktop.log 2>&1 &
-
-#Step 6: run xfce4-panel
-xfce4-panel > ~/xfce4-panel.log 2>&1 & echo $! > "$RUNTIME_DIR/xfce4-panel.pid" &
