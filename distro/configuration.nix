@@ -20,7 +20,21 @@
 
   # List packages installed in system profile.
   # You can use https://search.nixos.org/ to find more packages (and options).
-  environment.systemPackages = with pkgs; [ hello-asterinas ];
+  environment.systemPackages = with pkgs; [
+    hello-asterinas
+    mupdf
+    galculator
+    gnome-mines
+    gnome-sudoku
+    five-or-more
+    tali
+    gnome-chess
+    xgalagapp
+    xboard
+    lbreakout2
+    fairymax
+    xfce.mousepad
+  ];
 
   system.nixos.distroName = "Asterinas NixOS";
 
