@@ -483,20 +483,8 @@ EOF
       cp ${./files/Asterinas_Introduction.pdf} $out/root/Documents/Asterinas_Introduction.pdf
       cp ${./files/atc25-asterinas.pdf} $out/root/Documents/atc25-asterinas.pdf
 
-      # Create desktop shortcut for the PDF
+      # For saving short-cuts
       mkdir -p $out/root/Desktop
-      cat > $out/root/Desktop/CortenMM_ZGC.desktop << 'EOF'
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=CortenMM_ZGC Paper
-Comment=Memory Management Research Paper
-Icon=application-pdf
-Exec=env DISPLAY=:0 mupdf-x11 /root/Documents/CortenMM_ZGC.pdf
-Terminal=false
-Categories=Office;Viewer;
-EOF
-      chmod +x $out/root/Desktop/CortenMM_ZGC.desktop
 
       # XFCE4 Application Finder
       appfinder_mappings="bin:$out/usr/bin share:$out/usr/share"
