@@ -287,7 +287,7 @@ EOF
 
       # Install custom wallpaper
       mkdir -p $out/usr/share/backgrounds/asterinas
-      cp ${./files/Desktop_Background.png} $out/usr/share/backgrounds/asterinas/Desktop_Background.png
+      cp ${./files/Desktop_Background.jpg} $out/usr/share/backgrounds/asterinas/Desktop_Background.jpg
 
       # Generate xfce4-desktop.xml with default wallpaper settings
       mkdir -p $out/etc/xdg/xfce4/xfconf/xfce-perchannel-xml
@@ -299,7 +299,7 @@ EOF
     <property name="screen0" type="empty">
       <property name="monitordefault" type="empty">
         <property name="workspace0" type="empty">
-          <property name="last-image" type="string" value="/usr/share/backgrounds/asterinas/Desktop_Background.png"/>
+          <property name="last-image" type="string" value="/usr/share/backgrounds/asterinas/Desktop_Background.jpg"/>
         </property>
       </property>
     </property>
