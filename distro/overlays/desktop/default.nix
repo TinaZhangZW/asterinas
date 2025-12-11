@@ -47,6 +47,20 @@ self: super:
 
     xfdesktop =
       super.xfce.xfdesktop.overrideAttrs (oldAttrs: { version = "4.16.0"; });
+
+    mousepad =
+      super.xfce.mousepad.overrideAttrs (oldAttrs: {
+        patches = (oldAttrs.patches or [ ]) ++ [
+          ./patches/mousepad/0001-Remove-warning-log.patch
+        ];
+      });
+
+    thunar =
+      super.xfce.thunar.overrideAttrs (oldAttrs: {
+        patches = (oldAttrs.patches or [ ]) ++ [
+          ./patches/thunar/0001-Remove-warning-log.patch
+        ];
+      });
   };
 }
 

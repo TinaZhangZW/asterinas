@@ -1,0 +1,32 @@
+From bde619eeee4c76aa19263a0f02996508d1a24fcf Mon Sep 17 00:00:00 2001
+From: Wei Zhang <ruoyuan.zw@antgroup.com>
+Date: Thu, 11 Dec 2025 14:09:15 +0800
+Subject: [PATCH] Remove warning log
+
+---
+ thunar/thunar-window.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/thunar/thunar-window.c b/thunar/thunar-window.c
+index 9b4b7aa4c..336349427 100644
+--- a/thunar/thunar-window.c
++++ b/thunar/thunar-window.c
+@@ -1077,6 +1077,7 @@ thunar_window_init (ThunarWindow *window)
+   gtk_container_add (GTK_CONTAINER (item), window->spinner);
+   gtk_widget_set_visible (GTK_WIDGET (window->spinner), TRUE);
+ 
++#if 0
+   /* check if we need to add the root warning */
+   if (G_UNLIKELY (geteuid () == 0))
+     {
+@@ -1092,6 +1093,7 @@ thunar_window_init (ThunarWindow *window)
+       gtk_container_add (GTK_CONTAINER (gtk_info_bar_get_content_area (GTK_INFO_BAR (infobar))), label);
+       gtk_widget_show (label);
+     }
++#endif
+ 
+   /* main paned widget */
+   window->paned = gtk_paned_new (GTK_ORIENTATION_HORIZONTAL);
+-- 
+2.43.0
+

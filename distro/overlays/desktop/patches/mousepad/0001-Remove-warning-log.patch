@@ -1,0 +1,32 @@
+From f1a922e9132e3fa5276cc026db05e2b2928409c5 Mon Sep 17 00:00:00 2001
+From: Wei Zhang <ruoyuan.zw@antgroup.com>
+Date: Thu, 11 Dec 2025 14:03:59 +0800
+Subject: [PATCH] Remove warning log
+
+---
+ mousepad/mousepad-window.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/mousepad/mousepad-window.c b/mousepad/mousepad-window.c
+index 5a2698b4..59a80937 100644
+--- a/mousepad/mousepad-window.c
++++ b/mousepad/mousepad-window.c
+@@ -1145,6 +1145,7 @@ mousepad_window_post_init (MousepadWindow *window)
+ static void
+ mousepad_window_create_root_warning (MousepadWindow *window)
+ {
++#if 0
+   /* check if we need to add the root warning */
+   if (G_UNLIKELY (geteuid () == 0))
+     {
+@@ -1180,6 +1181,7 @@ mousepad_window_create_root_warning (MousepadWindow *window)
+                                       GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+       g_object_unref (provider);
+     }
++#endif
+ }
+ 
+ 
+-- 
+2.43.0
+
