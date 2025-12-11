@@ -23,6 +23,7 @@
     ./modules/container.nix
     ./modules/systemd.nix
     ./modules/docs.nix
+    ./modules/wallpaper.nix
   ];
 
   # Overlays provide patches to 'nixpkgs' that enable these packages to run effectively on AsterNixOS.
