@@ -1,0 +1,12 @@
+[package]
+name = "aster-gpu"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+component = { path = "../../libs/comp-sys/component" }
+ostd = { path = "../../../ostd" }
+spin = "0.9.4"
+
+[lints]
+workspace = true

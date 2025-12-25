@@ -199,6 +199,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "aster-gpu"
+version = "0.1.0"
+dependencies = [
+ "component",
+ "ostd",
+ "spin",
+]
+
+[[package]]
 name = "aster-i8042"
 version = "0.1.0"
 dependencies = [
@@ -277,6 +286,7 @@ dependencies = [
  "aster-cmdline",
  "aster-console",
  "aster-framebuffer",
+ "aster-gpu",
  "aster-i8042",
  "aster-input",
  "aster-logger",
