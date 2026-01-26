@@ -1,4 +1,4 @@
-mod device;
+mod minor;
 mod file;
 mod ioctl_defs;
 mod memfd;
@@ -7,7 +7,7 @@ use aster_gpu::drm::{device::DrmDevice, driver::DrmDriverFeatures};
 
 use crate::{
     device::{
-        drm::device::{DrmMinor, DrmMinorType},
+        drm::minor::{DrmMinor, DrmMinorType},
         registry::char,
     },
     prelude::*,

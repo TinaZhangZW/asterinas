@@ -15,7 +15,7 @@ use ostd::mm::{VmIo, io_util::HasVmReaderWriter};
 use crate::{
     current_userspace,
     device::drm::{
-        device::DrmMinor,
+        minor::DrmMinor,
         ioctl_defs::*,
         memfd::{DrmMemfdFile, dumb_create_impl},
     },
