@@ -15,6 +15,7 @@ pub fn init() {
     // the input core. We should find a way to avoid this in the future.
     #[expect(unused_imports)]
     use aster_i8042::*;
+    use aster_sysfb::*;
 
     if let Some(console) = FRAMEBUFFER_CONSOLE.get() {
         aster_console::register_device(CONSOLE_NAME.to_string(), console.clone());
