@@ -3,6 +3,7 @@
 use core::num::NonZeroUsize;
 
 use super::{MappedMemory, MappedVmo, RssDelta, VmMapping, Vmar};
+use crate::vm::vmar::vm_mapping::DeviceMem;
 use crate::{
     fs::{file_handle::Mappable, ramfs::memfd::MemfdInode},
     prelude::*,
@@ -279,7 +280,7 @@ impl<'a> VmarMapOptions<'a> {
         };
 
         // Parse the `Mappable` and prepare the `MappedMemory`.
-        let (mapped_mem, inode, io_mem) = if let Some(mappable) = mappable {
+        let (mapped_mem, inode, device_mem) = if let Some(mappable) = mappable {
             // Handle the memory backed by device or page cache.
             match mappable {
                 Mappable::Inode(inode) => {
@@ -303,7 +304,12 @@ impl<'a> VmarMapOptions<'a> {
                     )?);
                     (mapped_mem, Some(inode), None)
                 }
-                Mappable::IoMem(iomem) => (MappedMemory::Device, None, Some(iomem)),
+                Mappable::IoMem(iomem) => {
+                    (MappedMemory::Device, None, Some(DeviceMem::IoMem(iomem)))
+                }
+                Mappable::PhysMem(phys) => {
+                    (MappedMemory::Device, None, Some(DeviceMem::PhysMem(phys)))
+                }
             }
         } else if let Some(vmo) = vmo {
             (
@@ -332,8 +338,8 @@ impl<'a> VmarMapOptions<'a> {
         // otherwise another traversal is needed for locating the `VmMapping`.
         // Exchange the operation is ok since we hold the write lock on the
         // VMAR.
-        if let Some(io_mem) = io_mem {
-            vm_mapping.populate_device(parent.vm_space(), io_mem, vmo_offset)?;
+        if let Some(device_mem) = device_mem {
+            vm_mapping.populate_device(parent.vm_space(), device_mem, vmo_offset)?;
         }
 
         // Add the mapping to the VMAR.

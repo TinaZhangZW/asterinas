@@ -16,7 +16,10 @@ mod pixel;
 use component::{ComponentInitError, init_component};
 pub use console::{CONSOLE_NAME, FRAMEBUFFER_CONSOLE, FramebufferConsole};
 pub use dummy_console::DummyFramebufferConsole;
-pub use framebuffer::{ColorMapEntry, FRAMEBUFFER, FrameBuffer, MAX_CMAP_SIZE};
+pub use framebuffer::{
+    ColorMapEntry, FRAMEBUFFER, FrameBuffer, FrameBufferMem, MAX_CMAP_SIZE,
+    register_external_from_paddr,
+};
 pub use pixel::{Pixel, PixelFormat, RenderedPixel};
 
 #[init_component]

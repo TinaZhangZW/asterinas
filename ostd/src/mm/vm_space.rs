@@ -437,6 +437,52 @@ impl<'a> CursorMut<'a> {
         }
     }
 
+    /// Maps a range of physical memory into the current slot without using `IoMem`.
+    ///
+    /// The physical memory range is `[paddr + offset, paddr + offset + len)`,
+    /// capped by `size`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `len` or `offset` is not aligned to the page size.
+    pub fn map_paddr_range(
+        &mut self,
+        paddr: Paddr,
+        size: usize,
+        prop: PageProperty,
+        len: usize,
+        offset: usize,
+    ) {
+        assert_eq!(len % PAGE_SIZE, 0);
+        assert_eq!(offset % PAGE_SIZE, 0);
+
+        if offset >= size {
+            return;
+        }
+
+        let paddr_begin = paddr + offset;
+        let range_len = size.saturating_sub(offset).min(len);
+        let paddr_end = paddr_begin.saturating_add(range_len);
+
+        for current_paddr in (paddr_begin..paddr_end).step_by(PAGE_SIZE) {
+            // Save the current virtual address before mapping, since map() will advance the cursor
+            let current_va = self.virt_addr();
+
+            // SAFETY: The caller ensures the physical range is safe to map.
+            let map_result = unsafe {
+                self.pt_cursor
+                    .map(VmItem::new_untracked_io(current_paddr, prop))
+            };
+
+            let Err(frag) = map_result else {
+                // No mapping exists at the current address.
+                continue;
+            };
+
+            self.handle_remapped_frag(frag, current_va);
+        }
+    }
+
     /// Finds an [`IoMem`] that was previously mapped to by [`Self::map_iomem`] and contains the
     /// physical address.
     ///

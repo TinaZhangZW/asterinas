@@ -384,6 +384,7 @@ dependencies = [
  "aster-bigtcp",
  "aster-block",
  "aster-console",
+ "aster-gpu",
  "aster-input",
  "aster-network",
  "aster-pci",

@@ -160,6 +160,7 @@ impl FileIo for DrmFile {
     }
 
     fn ioctl(&self, raw_ioctl: RawIoctl) -> Result<i32> {
+
         // TODO: Call GpuDevice.handle_command() if it needs device specific ioctl handling.
         // TODO: drm_file permit flags check (master, root, render ...)
         dispatch_ioctl!(match raw_ioctl {
@@ -972,9 +973,9 @@ impl FileIo for DrmFile {
             }
             _ => {
                 let driver = self.device.driver();
-                match driver.handle_command(raw_ioctl.cmd(), raw_ioctl.arg()) {
-                    Ok(()) => Ok(0),
-                    Err(()) => {
+                let mut buf = match driver.alloc_command_buffer(raw_ioctl.cmd()) {
+                    Some(buf) => buf,
+                    None => {
                         // TODO: handle error
                         log::debug!(
                             "the ioctl command {:#x} is unknown for drm devices",
@@ -982,7 +983,28 @@ impl FileIo for DrmFile {
                         );
                         return_errno_with_message!(Errno::ENOTTY, "the ioctl command is unknown");
                     }
+                };
+
+                if !buf.is_empty() {
+                    current_userspace!().read_bytes(raw_ioctl.arg(), &mut buf)?;
                 }
+
+                if driver
+                    .handle_command(self.device.drm_device().as_ref(), raw_ioctl.cmd(), &mut buf)
+                    .is_err()
+                {
+                    return_errno_with_message!(Errno::ENOTTY, "the ioctl command is unknown");
+                }
+
+                if !buf.is_empty() {
+                    current_userspace!().write_bytes(raw_ioctl.arg(), &buf)?;
+                }
+
+                for copyout in driver.command_copyouts(raw_ioctl.cmd(), &buf) {
+                    current_userspace!().write_bytes(copyout.user_ptr, &copyout.data)?;
+                }
+
+                Ok(0)
             }
         })
     }

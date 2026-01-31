@@ -2,7 +2,9 @@
 
 use alloc::sync::Arc;
 
-use aster_framebuffer::{ColorMapEntry, FRAMEBUFFER, FrameBuffer, MAX_CMAP_SIZE, PixelFormat};
+use aster_framebuffer::{
+    ColorMapEntry, FRAMEBUFFER, FrameBuffer, FrameBufferMem, MAX_CMAP_SIZE, PixelFormat,
+};
 use device_id::{DeviceId, MajorId, MinorId};
 use ostd::{
     Pod,
@@ -471,8 +473,17 @@ impl FileIo for FbHandle {
     }
 
     fn mappable(&self) -> Result<Mappable> {
-        let iomem = self.framebuffer.io_mem();
-        Ok(Mappable::IoMem(iomem.clone()))
+        let mem = self.framebuffer.io_mem();
+        match mem {
+            FrameBufferMem::Io(iomem) => Ok(Mappable::IoMem(iomem.clone())),
+            FrameBufferMem::Ram(ram) => Ok(Mappable::PhysMem(
+                crate::fs::file_handle::PhysMem {
+                    paddr: ram.paddr(),
+                    size: ram.size(),
+                    cache_policy: mem.cache_policy(),
+                },
+            )),
+        }
     }
 
     fn ioctl(&self, raw_ioctl: RawIoctl) -> Result<i32> {

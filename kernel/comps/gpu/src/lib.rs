@@ -33,7 +33,7 @@ mod gpu_dev;
 use alloc::{string::String, sync::Arc, vec::Vec};
 
 use component::{ComponentInitError, init_component};
-pub use gpu_dev::GpuDevice;
+pub use gpu_dev::{GpuDevice, GpuFramebufferInfo, GpuPixelFormat};
 use hashbrown::HashMap;
 use ostd::sync::Mutex;
 use spin::Once;

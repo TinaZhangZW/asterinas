@@ -7,6 +7,7 @@
 use core::fmt::Display;
 
 use ostd::io::IoMem;
+use ostd::mm::{CachePolicy, Paddr, VmReader};
 
 use super::{inode_handle::InodeHandle, path::Path};
 use crate::{
@@ -168,4 +169,14 @@ pub enum Mappable {
     Inode(Arc<dyn Inode>),
     /// An MMIO region.
     IoMem(IoMem),
+    /// A raw physical memory range.
+    PhysMem(PhysMem),
+}
+
+/// Raw physical memory mapping parameters.
+#[derive(Debug, Clone, Copy)]
+pub struct PhysMem {
+    pub paddr: Paddr,
+    pub size: usize,
+    pub cache_policy: CachePolicy,
 }

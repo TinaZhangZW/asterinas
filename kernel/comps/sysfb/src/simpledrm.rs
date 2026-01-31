@@ -15,6 +15,7 @@ use aster_gpu::{
     },
     drm_register_driver,
 };
+use ostd::boot::boot_info;
 
 const SIMPLEDRM_NAME: &'static str = "simpledrm";
 const SIMPLEDRM_DESC: &'static str = "DRM driver for simple-framebuffer platform devices";
@@ -103,6 +104,8 @@ impl DrmDriver for SimpleDrmDriver {
     fn driver_ops(&self) -> DrmDriverOps {
         DrmDriverOps {
             dumb_create: Some(DumbCreateProvider::Memfd),
+            ioctl: None,
+            framebuffer_info: None,
         }
     }
 }
@@ -137,6 +140,9 @@ impl GpuDevice for SimpleGpuDevice {
 }
 
 pub fn init() {
+    if boot_info().framebuffer_arg.is_none() {
+        return;
+    }
     let device = Arc::new(SimpleGpuDevice {});
     let driver = Arc::new(SimpleDrmDriver {});
     aster_gpu::register_driver(SIMPLEDRM_NAME, driver)

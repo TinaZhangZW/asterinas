@@ -34,16 +34,16 @@ pub use self::{
     },
     io::{
         Fallible, FallibleVmRead, FallibleVmWrite, Infallible, PodAtomic, PodOnce, VmIo, VmIoFill,
-        VmIoOnce, VmReader, VmWriter,
+        VmIoOnce, VmReader, VmWriter, vm_reader_from_linear_mapping,
+        vm_writer_from_linear_mapping,
     },
     kspace::{KERNEL_VADDR_RANGE, MAX_USERSPACE_VADDR},
     mem_obj::{HasDaddr, HasPaddr, HasPaddrRange, HasSize, Split},
     page_prop::{CachePolicy, PageFlags, PageProperty},
     vm_space::VmSpace,
 };
-pub(crate) use self::{
-    kspace::paddr_to_vaddr, page_prop::PrivilegedPageFlags, page_table::PageTable,
-};
+pub(crate) use self::{page_prop::PrivilegedPageFlags, page_table::PageTable};
+pub use self::kspace::paddr_to_vaddr;
 use crate::arch::mm::PagingConsts;
 
 /// Virtual addresses.

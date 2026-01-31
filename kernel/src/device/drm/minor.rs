@@ -70,6 +70,10 @@ impl DrmMinor {
         self.device.driver()
     }
 
+    pub fn drm_device(&self) -> Arc<DrmDevice> {
+        self.device.clone()
+    }
+
     pub fn resources(&self) -> &Mutex<DrmModeConfig> {
         &self.device.resources()
     }

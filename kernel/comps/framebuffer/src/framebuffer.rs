@@ -6,7 +6,11 @@ use ostd::{
     Error, Result,
     boot::boot_info,
     io::IoMem,
-    mm::{CachePolicy, HasSize, VmIo},
+    mm::{
+        CachePolicy, HasPaddr, HasSize, Infallible, Paddr, VmIo, VmReader, VmWriter,
+        io_util::{HasVmReaderWriter, VmReaderWriterIdentity},
+        paddr_to_vaddr, vm_reader_from_linear_mapping, vm_writer_from_linear_mapping,
+    },
     sync::Mutex,
 };
 use spin::Once;
@@ -26,12 +30,103 @@ pub const MAX_CMAP_SIZE: usize = 256;
 /// or unspecified behavior during rendering.
 #[derive(Debug)]
 pub struct FrameBuffer {
-    io_mem: IoMem,
+    mem: FrameBufferMem,
     width: usize,
     height: usize,
     line_size: usize,
     pixel_format: PixelFormat,
     cmap: Mutex<FbCmap>,
+}
+
+#[derive(Debug, Clone)]
+pub enum FrameBufferMem {
+    Io(IoMem),
+    Ram(RamMem),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RamMem {
+    paddr: Paddr,
+    vaddr: usize,
+    size: usize,
+    cache_policy: CachePolicy,
+}
+
+impl HasPaddr for RamMem {
+    fn paddr(&self) -> Paddr {
+        self.paddr
+    }
+}
+
+impl HasSize for RamMem {
+    fn size(&self) -> usize {
+        self.size
+    }
+}
+
+impl RamMem {
+    fn cache_policy(&self) -> CachePolicy {
+        self.cache_policy
+    }
+}
+
+impl HasVmReaderWriter for RamMem {
+    type Types = VmReaderWriterIdentity;
+
+    fn reader(&self) -> VmReader<'_, Infallible> {
+        vm_reader_from_linear_mapping(self.vaddr, self.size)
+            .expect("validated linear mapping range")
+    }
+
+    fn writer(&self) -> VmWriter<'_, Infallible> {
+        vm_writer_from_linear_mapping(self.vaddr, self.size)
+            .expect("validated linear mapping range")
+    }
+}
+
+impl HasPaddr for FrameBufferMem {
+    fn paddr(&self) -> Paddr {
+        match self {
+            FrameBufferMem::Io(io) => io.paddr(),
+            FrameBufferMem::Ram(ram) => ram.paddr(),
+        }
+    }
+}
+
+impl HasSize for FrameBufferMem {
+    fn size(&self) -> usize {
+        match self {
+            FrameBufferMem::Io(io) => io.size(),
+            FrameBufferMem::Ram(ram) => ram.size(),
+        }
+    }
+}
+
+impl FrameBufferMem {
+    pub fn cache_policy(&self) -> CachePolicy {
+        match self {
+            FrameBufferMem::Io(io) => io.cache_policy(),
+            FrameBufferMem::Ram(ram) => ram.cache_policy(),
+        }
+    }
+}
+
+impl HasVmReaderWriter for FrameBufferMem {
+    type Types = VmReaderWriterIdentity;
+
+    fn reader(&self) -> VmReader<'_, Infallible> {
+        match self {
+            FrameBufferMem::Io(io) => io.reader(),
+            FrameBufferMem::Ram(ram) => ram.reader(),
+        }
+    }
+
+    fn writer(&self) -> VmWriter<'_, Infallible> {
+        match self {
+            FrameBufferMem::Io(io) => io.writer(),
+            FrameBufferMem::Ram(ram) => ram.writer(),
+        }
+    }
 }
 
 /// A single entry in the color map with 16-bit color values.
@@ -60,6 +155,9 @@ struct FbCmap {
 pub static FRAMEBUFFER: Once<Arc<FrameBuffer>> = Once::new();
 
 pub(crate) fn init() {
+    if FRAMEBUFFER.get().is_some() {
+        return;
+    }
     let Some(framebuffer_arg) = boot_info().framebuffer_arg else {
         log::warn!("Framebuffer not found");
         return;
@@ -110,7 +208,7 @@ pub(crate) fn init() {
         };
 
         FrameBuffer {
-            io_mem,
+            mem: FrameBufferMem::Io(io_mem),
             width: framebuffer_arg.width,
             height: framebuffer_arg.height,
             line_size,
@@ -121,6 +219,49 @@ pub(crate) fn init() {
 
     framebuffer.clear();
     FRAMEBUFFER.call_once(|| Arc::new(framebuffer));
+}
+
+pub fn register_external_from_paddr(
+    paddr: ostd::mm::Paddr,
+    size: usize,
+    width: usize,
+    height: usize,
+    line_size: usize,
+    pixel_format: PixelFormat,
+) -> Result<()> {
+    if FRAMEBUFFER.get().is_some() {
+        return Err(Error::InvalidArgs);
+    }
+
+    let end = paddr.checked_add(size).ok_or(Error::Overflow)?;
+    let mem = match IoMem::acquire_with_cache_policy(paddr..end, CachePolicy::WriteCombining) {
+        Ok(io_mem) => FrameBufferMem::Io(io_mem),
+        Err(Error::AccessDenied) => {
+            let vaddr = paddr_to_vaddr(paddr);
+            vm_reader_from_linear_mapping(vaddr, size)?;
+            FrameBufferMem::Ram(RamMem {
+                paddr,
+                vaddr,
+                size,
+                cache_policy: CachePolicy::WriteCombining,
+            })
+        }
+        Err(err) => return Err(err),
+    };
+
+    let framebuffer = FrameBuffer {
+        mem,
+        width,
+        height,
+        line_size,
+        pixel_format,
+        cmap: Mutex::new(FbCmap { entries: Vec::new() }),
+    };
+
+    framebuffer.clear();
+    FRAMEBUFFER.call_once(|| Arc::new(framebuffer));
+    crate::console::init();
+    Ok(())
 }
 
 impl FrameBuffer {
@@ -139,9 +280,9 @@ impl FrameBuffer {
         self.line_size
     }
 
-    /// Returns a reference to the `IoMem` instance of the framebuffer.
-    pub fn io_mem(&self) -> &IoMem {
-        &self.io_mem
+    /// Returns a reference to the framebuffer memory backing.
+    pub fn io_mem(&self) -> &FrameBufferMem {
+        &self.mem
     }
 
     /// Returns the pixel format of the framebuffer.
@@ -164,12 +305,12 @@ impl FrameBuffer {
 
     /// Writes a pixel at the specified position.
     pub fn write_pixel_at(&self, offset: PixelOffset, pixel: RenderedPixel) -> Result<()> {
-        self.io_mem.write_bytes(offset.as_usize(), pixel.as_slice())
+        self.mem.write_bytes(offset.as_usize(), pixel.as_slice())
     }
 
     /// Writes raw bytes at the specified offset.
     pub fn write_bytes_at(&self, offset: usize, bytes: &[u8]) -> Result<()> {
-        self.io_mem.write_bytes(offset, bytes)
+        self.mem.write_bytes(offset, bytes)
     }
 
     /// Clears the framebuffer with default color (black).

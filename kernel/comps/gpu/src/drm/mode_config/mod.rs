@@ -25,6 +25,18 @@ pub mod property;
 
 const DRM_DISPLAY_MODE_LEN: usize = 32;
 
+pub trait DrmModeConfigFuncs: Debug + Any + Sync + Send {
+    fn fb_create(
+        &self,
+        mode_config: &mut DrmModeConfig,
+        width: u32,
+        height: u32,
+        pitch: u32,
+        bpp: u32,
+        gem_obj: Arc<DrmGemObject>,
+    ) -> u32;
+}
+
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, Hash, Eq, PartialEq, Pod)]
 pub struct DrmModeModeInfo {
@@ -71,6 +83,8 @@ pub struct DrmModeConfig {
     connectors: HashMap<u32, Arc<DrmConnector>>,
     framebuffers: HashMap<u32, Arc<DrmFramebuffer>>,
 
+    funcs: Option<Arc<dyn DrmModeConfigFuncs>>,
+
     next_object_id: AtomicU32,
     objects: HashMap<u32, Arc<dyn DrmModeObject>>,
     next_prop_id: AtomicU32,
@@ -102,6 +116,8 @@ impl DrmModeConfig {
             encoders: HashMap::new(),
             connectors: HashMap::new(),
             framebuffers: HashMap::new(),
+
+            funcs: None,
 
             preferred_depth: 16,
             prefer_shadow: 0,
@@ -161,11 +177,30 @@ impl DrmModeConfig {
         bpp: u32,
         gem_obj: Arc<DrmGemObject>,
     ) -> u32 {
+        if let Some(funcs) = self.funcs.clone() {
+            return funcs.fb_create(self, width, height, pitch, bpp, gem_obj);
+        }
+
+        self.create_framebuffer_default(width, height, pitch, bpp, gem_obj)
+    }
+
+    pub fn create_framebuffer_default(
+        &mut self,
+        width: u32,
+        height: u32,
+        pitch: u32,
+        bpp: u32,
+        gem_obj: Arc<DrmGemObject>,
+    ) -> u32 {
         let id = self.next_object_id();
         let fb = Arc::new(DrmFramebuffer::new(id, width, height, pitch, bpp, gem_obj));
         self.framebuffers.insert(id, fb.clone());
         self.objects.insert(id, fb);
         id
+    }
+
+    pub fn set_mode_config_funcs(&mut self, funcs: Option<Arc<dyn DrmModeConfigFuncs>>) {
+        self.funcs = funcs;
     }
 
     pub fn lookup_framebuffer(&self, fb_id: &u32) -> Option<Arc<DrmFramebuffer>> {

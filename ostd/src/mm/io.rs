@@ -54,6 +54,44 @@ use crate::{
     prelude::*,
 };
 
+/// Creates a [`VmReader`] over a linear-mapped kernel RAM range.
+///
+/// This function validates that the address range is within the linear
+/// mapping area before constructing the reader.
+pub fn vm_reader_from_linear_mapping(
+    vaddr: usize,
+    len: usize,
+) -> Result<VmReader<'static, Infallible>> {
+    let end = vaddr.checked_add(len).ok_or(Error::Overflow)?;
+    if vaddr < crate::mm::kspace::LINEAR_MAPPING_VADDR_RANGE.start
+        || end > crate::mm::kspace::LINEAR_MAPPING_VADDR_RANGE.end
+    {
+        return Err(Error::InvalidArgs);
+    }
+
+    // SAFETY: The range is validated to be within the linear mapping area.
+    Ok(unsafe { VmReader::from_kernel_space(vaddr as *const u8, len) })
+}
+
+/// Creates a [`VmWriter`] over a linear-mapped kernel RAM range.
+///
+/// This function validates that the address range is within the linear
+/// mapping area before constructing the writer.
+pub fn vm_writer_from_linear_mapping(
+    vaddr: usize,
+    len: usize,
+) -> Result<VmWriter<'static, Infallible>> {
+    let end = vaddr.checked_add(len).ok_or(Error::Overflow)?;
+    if vaddr < crate::mm::kspace::LINEAR_MAPPING_VADDR_RANGE.start
+        || end > crate::mm::kspace::LINEAR_MAPPING_VADDR_RANGE.end
+    {
+        return Err(Error::InvalidArgs);
+    }
+
+    // SAFETY: The range is validated to be within the linear mapping area.
+    Ok(unsafe { VmWriter::from_kernel_space(vaddr as *mut u8, len) })
+}
+
 /// A trait that enables reading/writing data from/to a VM object,
 /// e.g., [`USegment`], [`Vec<UFrame>`] and [`UFrame`].
 ///

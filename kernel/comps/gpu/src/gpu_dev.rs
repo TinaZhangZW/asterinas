@@ -3,6 +3,26 @@
 use alloc::{sync::Arc, vec::Vec};
 use core::{any::Any, fmt::Debug};
 
+use ostd::mm::Paddr;
+
+#[derive(Debug, Clone, Copy)]
+pub enum GpuPixelFormat {
+    Grayscale8,
+    Rgb565,
+    Rgb888,
+    BgrReserved,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct GpuFramebufferInfo {
+    pub paddr: Paddr,
+    pub size: usize,
+    pub width: usize,
+    pub height: usize,
+    pub line_size: usize,
+    pub pixel_format: GpuPixelFormat,
+}
+
 /// A low-level abstraction for a GPU-capable device discovered by the system.
 ///
 /// `GpuDevice` is implemented by bus- or platform-specific objects (for example
@@ -27,6 +47,11 @@ pub trait GpuDevice: Send + Sync + Any + Debug {
     /// the DRM driver registry. Implementations should return a stable value.
     fn driver_name(&self) -> &str;
     // more settings e.g. device_id, capability, resources
+
+    /// Returns a framebuffer info snapshot if the device provides a scanout buffer.
+    fn framebuffer_info(&self) -> Option<GpuFramebufferInfo> {
+        None
+    }
 }
 
 #[derive(Debug, Default)]

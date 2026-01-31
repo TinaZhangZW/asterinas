@@ -1,5 +1,5 @@
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::{any::Any, sync::atomic::{AtomicU64, Ordering}};
 
 use hashbrown::HashMap;
 use ostd::{mm::PAGE_SIZE, sync::Mutex};
@@ -48,6 +48,8 @@ pub struct DrmDevice {
     /// consumes a new offset from this counter.
     next_offset: AtomicU64,
     offset_table: Mutex<HashMap<u64, Arc<DrmGemObject>>>,
+
+    driver_data: Mutex<Option<Arc<dyn Any + Send + Sync>>>,
 }
 
 impl DrmDevice {
@@ -73,6 +75,7 @@ impl DrmDevice {
             // Proper offset allocation logic should replace this static seed in the future.
             next_offset: AtomicU64::new(0x100000),
             offset_table: Mutex::new(HashMap::new()),
+            driver_data: Mutex::new(None),
         }
     }
 
@@ -115,5 +118,18 @@ impl DrmDevice {
     pub fn remove_offset(&self, gem_obj: &Arc<DrmGemObject>) {
         let mut table = self.offset_table.lock();
         table.retain(|_, gem| !Arc::ptr_eq(gem, gem_obj));
+    }
+
+    /// Stores driver-specific data on the DRM device.
+    pub fn set_driver_data<T: Any + Send + Sync>(&self, data: Arc<T>) {
+        let mut slot = self.driver_data.lock();
+        *slot = Some(data);
+    }
+
+    /// Retrieves driver-specific data from the DRM device.
+    pub fn driver_data<T: Any + Send + Sync>(&self) -> Option<Arc<T>> {
+        let slot = self.driver_data.lock();
+        let data = slot.as_ref()?.clone();
+        Arc::downcast::<T>(data).ok()
     }
 }

@@ -3,7 +3,9 @@ mod file;
 mod ioctl_defs;
 mod memfd;
 
-use aster_gpu::drm::{device::DrmDevice, driver::DrmDriverFeatures};
+use aster_framebuffer::{FRAMEBUFFER, PixelFormat, register_external_from_paddr};
+use aster_gpu::{GpuPixelFormat, drm::{device::DrmDevice, driver::DrmDriverFeatures}};
+use log::warn;
 
 use crate::{
     device::{
@@ -33,10 +35,15 @@ pub(super) fn init_in_first_kthread() -> Result<()> {
             match driver.create_device(index as u32) {
                 Ok(device) => {
                     any_success = true;
-                    drm_dev_register(device)?;
-                    // println!("[kernel] gpu device: {:?} probe correctly!", device.name());
+                    drm_dev_register(device.clone())?;
+                    try_register_fbdev(device.as_ref());
                 }
                 Err(_error) => {
+                    warn!(
+                        "[kernel] gpu device: driver {} failed to create device for index {}",
+                        driver.name(),
+                        index
+                    );
                     // TODO: handle the error
                 }
             }
@@ -65,4 +72,37 @@ fn drm_dev_register(device: Arc<DrmDevice>) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn try_register_fbdev(device: &DrmDevice) {
+    if FRAMEBUFFER.get().is_some() {
+        return;
+    }
+
+    let Some(provider) = device.driver().driver_ops().framebuffer_info else {
+        return;
+    };
+
+    let Some(info) = provider(device) else {
+        warn!("fbdev: no framebuffer info from DRM driver");
+        return;
+    };
+
+    let pixel_format = match info.pixel_format {
+        GpuPixelFormat::Grayscale8 => PixelFormat::Grayscale8,
+        GpuPixelFormat::Rgb565 => PixelFormat::Rgb565,
+        GpuPixelFormat::Rgb888 => PixelFormat::Rgb888,
+        GpuPixelFormat::BgrReserved => PixelFormat::BgrReserved,
+    };
+
+    if let Err(err) = register_external_from_paddr(
+        info.paddr,
+        info.size,
+        info.width,
+        info.height,
+        info.line_size,
+        pixel_format,
+    ) {
+        warn!("fbdev: failed to register framebuffer: {:?}", err);
+    }
 }

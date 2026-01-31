@@ -19,7 +19,7 @@ use ostd::{
 
 use super::{RssType, interval_set::Interval, util::is_intersected, vmar_impls::RssDelta};
 use crate::{
-    fs::utils::Inode,
+    fs::{file_handle::PhysMem, utils::Inode},
     prelude::*,
     thread::exception::PageFaultInfo,
     vm::{
@@ -27,6 +27,12 @@ use crate::{
         vmo::{CommitFlags, Vmo, VmoCommitError},
     },
 };
+
+#[derive(Debug, Clone)]
+pub(crate) enum DeviceMem {
+    IoMem(IoMem),
+    PhysMem(PhysMem),
+}
 
 /// A memory mapping for a range of virtual addresses in a [`Vmar`].
 ///
@@ -187,7 +193,7 @@ impl VmMapping {
     pub(super) fn populate_device(
         &self,
         vm_space: &VmSpace,
-        io_mem: IoMem,
+        device_mem: DeviceMem,
         vmo_offset: usize,
     ) -> Result<()> {
         debug_assert!(matches!(self.mapped_mem, MappedMemory::Device));
@@ -195,9 +201,17 @@ impl VmMapping {
         let preempt_guard = disable_preempt();
         let map_range = self.map_to_addr..self.map_to_addr + self.map_size.get();
         let mut cursor = vm_space.cursor_mut(&preempt_guard, &map_range)?;
-        let io_page_prop =
-            PageProperty::new_user(PageFlags::from(self.perms), io_mem.cache_policy());
-        cursor.map_iomem(io_mem, io_page_prop, self.map_size.get(), vmo_offset);
+        match device_mem {
+            DeviceMem::IoMem(io_mem) => {
+                let io_page_prop =
+                    PageProperty::new_user(PageFlags::from(self.perms), io_mem.cache_policy());
+                cursor.map_iomem(io_mem, io_page_prop, self.map_size.get(), vmo_offset);
+            }
+            DeviceMem::PhysMem(phys) => {
+                let prop = PageProperty::new_user(PageFlags::from(self.perms), phys.cache_policy);
+                cursor.map_paddr_range(phys.paddr, phys.size, prop, self.map_size.get(), vmo_offset);
+            }
+        }
 
         Ok(())
     }

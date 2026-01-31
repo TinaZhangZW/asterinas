@@ -44,6 +44,7 @@ TEST_APPS := \
 	pty \
 	sched \
 	shm \
+	virtio_gpu \
 	vsock \
 
 # TODO: Refactor those tests for target CPU arch using C macro-based conditional compilation.

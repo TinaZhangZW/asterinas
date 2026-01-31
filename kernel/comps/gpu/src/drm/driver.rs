@@ -1,10 +1,10 @@
-use alloc::sync::Arc;
+use alloc::{sync::Arc, vec::Vec};
 use core::{any::Any, fmt::Debug};
 
 use crate::drm::{device::DrmDevice, gem::DrmGemObject};
 
-/// Feature flags advertised by a DRM driver.
 bitflags::bitflags! {
+    /// Feature flags advertised by a DRM driver.
     pub struct DrmDriverFeatures: u32 {
         const GEM              = 1 << 0;
         const MODESET          = 1 << 1;
@@ -23,6 +23,12 @@ bitflags::bitflags! {
         const HAVE_DMA         = 1 << 29;
         const HAVE_IRQ         = 1 << 30;
     }
+}
+
+/// A user-space copyout requested by a DRM driver after handling an ioctl.
+pub struct DrmUserCopyOut {
+    pub user_ptr: usize,
+    pub data: Vec<u8>,
 }
 
 /// Defines the interface implemented by a concrete DRM GPU driver.
@@ -51,9 +57,28 @@ pub trait DrmDriver: Send + Sync + Any + Debug {
     /// functionality (for example, modesetting, GEM, render node support).
     fn driver_features(&self) -> DrmDriverFeatures;
 
-    /// Handle device-specific command / ioctl.
-    fn handle_command(&self, _cmd: u32, _data: usize) -> Result<(), ()> {
-        Ok(())
+    /// Allocate a driver-owned buffer for a device-specific command / ioctl.
+    ///
+    /// Returns `Some(buffer)` if the driver recognizes the command and knows
+    /// the required parameter size. The DRM core will copy the user data into
+    /// this buffer before calling `handle_command`, and copy it back afterward.
+    fn alloc_command_buffer(&self, _cmd: u32) -> Option<alloc::vec::Vec<u8>> {
+        None
+    }
+
+    /// Handle device-specific command / ioctl with driver-owned buffer.
+    fn handle_command(
+        &self,
+        _device: &DrmDevice,
+        _cmd: u32,
+        _data: &mut [u8],
+    ) -> Result<(), ()> {
+        Err(())
+    }
+
+    /// Optional extra user-space copyouts derived from the ioctl parameter buffer.
+    fn command_copyouts(&self, _cmd: u32, _data: &[u8]) -> Vec<DrmUserCopyOut> {
+        Vec::new()
     }
 
     /// Returns optional driver operations for generic DRM capabilities.
@@ -95,10 +120,18 @@ pub struct DrmDriverOps {
     /// TTM or another allocator) and returns the resulting buffer handle. This
     /// handle can then be wrapped into a framebuffer modeset object.
     pub dumb_create: Option<DumbCreateProvider>,
+    /// Optional device-specific ioctl handler.
+    pub ioctl: Option<fn(&DrmDevice, u32, &mut [u8]) -> Result<(), ()>>,
+    /// Optional framebuffer info provider for fbdev/fbcon.
+    pub framebuffer_info: Option<fn(&DrmDevice) -> Option<crate::GpuFramebufferInfo>>,
 }
 
 impl DrmDriverOps {
-    pub const EMPTY: Self = Self { dumb_create: None };
+    pub const EMPTY: Self = Self {
+        dumb_create: None,
+        ioctl: None,
+        framebuffer_info: None,
+    };
 
     pub fn merge(self, other: Self) -> Self {
         Self {
@@ -106,6 +139,12 @@ impl DrmDriverOps {
                 other.dumb_create
             } else {
                 self.dumb_create
+            },
+            ioctl: if other.ioctl.is_some() { other.ioctl } else { self.ioctl },
+            framebuffer_info: if other.framebuffer_info.is_some() {
+                other.framebuffer_info
+            } else {
+                self.framebuffer_info
             },
         }
     }
