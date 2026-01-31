@@ -51,6 +51,10 @@ pub struct DrmDevice {
 }
 
 impl DrmDevice {
+    /// Creates a new DRM device instance.
+    ///
+    /// `index` is a stable identifier assigned by the DRM core. `driver` and
+    /// `driver_features` describe the driver instance and its capability flags.
     pub fn new(index: u32, driver: Arc<dyn DrmDriver>, driver_features: DrmDriverFeatures) -> Self {
         Self {
             index,
@@ -72,22 +76,27 @@ impl DrmDevice {
         }
     }
 
+    /// Returns the DRM device index.
     pub fn index(&self) -> u32 {
         self.index
     }
 
+    /// Returns the associated DRM driver.
     pub fn driver(&self) -> Arc<dyn DrmDriver> {
         self.driver.clone()
     }
 
+    /// Returns the mode configuration resource store.
     pub fn resources(&self) -> &Mutex<DrmModeConfig> {
         &self.mode_config
     }
 
+    /// Checks whether the device supports the requested feature flags.
     pub fn check_feature(&self, features: DrmDriverFeatures) -> bool {
         self.driver_features.contains(features)
     }
 
+    /// Allocates a fake mmap offset for a GEM object and stores the mapping.
     pub fn create_offset(&self, gem_obj: Arc<DrmGemObject>) -> u64 {
         let offset = self
             .next_offset
@@ -97,10 +106,12 @@ impl DrmDevice {
         offset
     }
 
+    /// Looks up a GEM object by its fake mmap offset.
     pub fn lookup_offset(&self, offset: &u64) -> Option<Arc<DrmGemObject>> {
         self.offset_table.lock().get(offset).cloned()
     }
 
+    /// Removes any mmap offsets that reference the specified GEM object.
     pub fn remove_offset(&self, gem_obj: &Arc<DrmGemObject>) {
         let mut table = self.offset_table.lock();
         table.retain(|_, gem| !Arc::ptr_eq(gem, gem_obj));

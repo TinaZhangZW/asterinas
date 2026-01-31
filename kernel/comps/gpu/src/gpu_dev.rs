@@ -3,30 +3,28 @@
 use alloc::{sync::Arc, vec::Vec};
 use core::{any::Any, fmt::Debug};
 
-/// A low-level abstraction representing a GPU-capable device that has been
-/// discovered by the system, but is not yet bound to any DRM driver.
+/// A low-level abstraction for a GPU-capable device discovered by the system.
 ///
-/// `GpuDevice` is implemented by bus- or platform-specific device objects
-/// (e.g. PCI, Virtio, platform firmware devices) to advertise that the device
-/// provides GPU functionality.
-///
-/// The purpose of this trait is **driver matching and probing**, not device
+/// `GpuDevice` is implemented by bus- or platform-specific objects (for example
+/// PCI, Virtio, or firmware-provided devices) to advertise GPU capability. The
+/// trait is designed **only for driver matching and probing**, not for device
 /// lifetime management or DRM node representation.
 ///
 /// Typical flow:
-/// 1. A concrete device (e.g. `VirtioGpuDevice`) is discovered by its bus.
-/// 2. The device implements `GpuDevice` trait to declare GPU capability.
-/// 3. The DRM core selects a compatible `DrmDriver` based on device properties.
+/// 1. A concrete device (e.g., `VirtioGpuDevice`) is discovered by its bus.
+/// 2. The device implements `GpuDevice` to declare GPU capability.
+/// 3. The DRM core selects a compatible `DrmDriver` using device properties.
 /// 4. One or more `DrmDevice` instances are created and bound to the driver.
 ///
-/// Note:
-/// - `GpuDevice` does NOT represent a DRM device node.
-/// - `GpuDevice` does NOT handle char device registration or file operations.
-/// - A single `GpuDevice` may result in multiple DRM nodes (primary/render/control).
+/// Notes:
+/// - `GpuDevice` does not represent a DRM device node.
+/// - `GpuDevice` does not handle char device registration or file operations.
+/// - A single `GpuDevice` may map to multiple DRM nodes (primary/render/control).
 pub trait GpuDevice: Send + Sync + Any + Debug {
-    /// TODO: Human-readable device name, used for debugging, logging,
-    /// and optional driver matching.
-    /// TODO: how to matching drm driver?
+    /// Returns the driver name used for matching this device to a DRM driver.
+    ///
+    /// The returned string is expected to correspond to a name registered via
+    /// the DRM driver registry. Implementations should return a stable value.
     fn driver_name(&self) -> &str;
     // more settings e.g. device_id, capability, resources
 }
@@ -43,7 +41,10 @@ impl GpuDevices {
         }
     }
 
-    /// Snapshot (clone Arcs) so caller can use it after unlocking the mutex.
+    /// Returns a snapshot of registered devices.
+    ///
+    /// The returned vector contains `Arc` clones to allow use after releasing
+    /// the registry lock.
     pub fn snapshot(&self) -> Vec<Arc<dyn GpuDevice>> {
         self.devices.clone()
     }

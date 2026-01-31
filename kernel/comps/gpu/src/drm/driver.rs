@@ -3,6 +3,7 @@ use core::{any::Any, fmt::Debug};
 
 use crate::drm::{device::DrmDevice, gem::DrmGemObject};
 
+/// Feature flags advertised by a DRM driver.
 bitflags::bitflags! {
     pub struct DrmDriverFeatures: u32 {
         const GEM              = 1 << 0;
@@ -28,11 +29,10 @@ bitflags::bitflags! {
 ///
 /// `DrmDriver` represents the **driver-level logic** for a specific class of
 /// GPU devices. It is responsible for device instantiation, feature
-/// declaration, and handling operations that are part of
-/// the generic DRM core.
+/// declaration, and handling operations that are part of the generic DRM core.
 ///
-/// A single `DrmDriver` instance may manage multiple DRM devices (e.g. multiple
-/// GPUs of the same type), each identified by a unique index.
+/// A single `DrmDriver` instance may manage multiple DRM devices (for example,
+/// multiple GPUs of the same type), each identified by a unique index.
 pub trait DrmDriver: Send + Sync + Any + Debug {
     /// Device name, description and date (for debugging / identification).
     fn name(&self) -> &str;
@@ -48,7 +48,7 @@ pub trait DrmDriver: Send + Sync + Any + Debug {
     /// Returns the feature flags supported by devices driven by this driver.
     ///
     /// The DRM core uses this information to enable or restrict generic
-    /// functionality (e.g. modesetting, GEM, render node support).
+    /// functionality (for example, modesetting, GEM, render node support).
     fn driver_features(&self) -> DrmDriverFeatures;
 
     /// Handle device-specific command / ioctl.
@@ -56,17 +56,15 @@ pub trait DrmDriver: Send + Sync + Any + Debug {
         Ok(())
     }
 
+    /// Returns optional driver operations for generic DRM capabilities.
     fn driver_ops(&self) -> DrmDriverOps;
 }
 
-/// Defines and registers a DRM driver with the global driver table.
+/// Declares a DRM driver type.
 ///
-/// This macro generates:
-/// - A concrete, zero-sized DRM driver type.
-/// - A `register_driver()` helper function that inserts the driver instance
-///   into the DRM driver table under a given name.
-///
-/// TODO: Do not rely on device.name() for driver matching.
+/// This macro generates a concrete, zero-sized DRM driver type. Registration
+/// of the driver is expected to be handled by the caller via the GPU component
+/// registry.
 #[macro_export]
 macro_rules! drm_register_driver {
     (
@@ -86,16 +84,16 @@ macro_rules! drm_register_driver {
 ///
 /// This struct defines a set of driver-provided callbacks that the DRM core
 /// may invoke for standard buffer management operations. Drivers that support
-/// these features (e.g., KMS dumb buffers) should supply appropriate
+/// these features (for example, KMS dumb buffers) should supply appropriate
 /// function implementations; drivers that do not can leave the fields `None`.
 ///
 /// Linux DRM exposes similar optional hooks (such as `dumb_create` and
 /// `dumb_map_offset`) that are invoked via the corresponding ioctls when
 /// userspace requests simple scanout buffer creation or mmap offsets.
 pub struct DrmDriverOps {
-    /// This creates a new dumb buffer in the driver's backing storage manager (GEM,
-    /// TTM or something else entirely) and returns the resulting buffer handle. This
-    /// handle can then be wrapped up into a framebuffer modeset object.
+    /// Creates a new dumb buffer in the driver's backing storage manager (GEM,
+    /// TTM or another allocator) and returns the resulting buffer handle. This
+    /// handle can then be wrapped into a framebuffer modeset object.
     pub dumb_create: Option<DumbCreateProvider>,
 }
 
@@ -113,18 +111,20 @@ impl DrmDriverOps {
     }
 }
 
+/// Provider for creating dumb buffers.
 pub enum DumbCreateProvider {
     Memfd,
     Custom(fn(width: u32, height: u32, bpp: u32) -> Result<Arc<DrmGemObject>, ()>),
 }
 
-/// This macro recursively merges a list of `DrmDriverOps` expressions into
-/// one. Each item in the invocation is merged with the next by calling
-/// `.merge(...)` on the head and the result of the recursive call on the
-/// tail, yielding a consolidated `DrmDriverOps`.
+/// Recursively merges a list of `DrmDriverOps` expressions into one.
 ///
-/// produces a merged `DrmDriverOps` that combines the supplied ops with
-/// the baseline `DrmDriverOps::EMPTY`.
+/// Each item in the invocation is merged with the next by calling `.merge(...)`
+/// on the head and the result of the recursive call on the tail, yielding a
+/// consolidated `DrmDriverOps`.
+///
+/// Produces a merged `DrmDriverOps` that combines the supplied ops with the
+/// baseline `DrmDriverOps::EMPTY`.
 ///
 /// This pattern uses declarative macro recursion to build up the final ops
 /// set at compile time.
