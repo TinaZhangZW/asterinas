@@ -1110,10 +1110,26 @@ impl FileIo for DrmFile {
                     return_errno!(Errno::EINVAL);
                 }
 
-                // Asterinas currently exposes a single virtio-gpu DRM device
-                // without Linux sysfs/PCI bus metadata, so report an empty
-                // unique bus-id string for compatibility.
-                user_data.unique_len = 0;
+                // Expose a stable, Linux-like bus-id string so libdrm can
+                // correlate primary/render DRM nodes during GBM/EGL probing.
+                // We use a deterministic synthetic PCI slot per DRM index.
+                let unique = [
+                    b'p', b'c', b'i', b':',
+                    b'0', b'0', b'0', b'0', b':',
+                    b'0', b'0', b':',
+                    b'0' + ((self.device.index() / 10) % 10) as u8,
+                    b'0' + (self.device.index() % 10) as u8,
+                    b'.', b'0',
+                ];
+                let full_len = unique.len() as i32;
+
+                if user_data.unique != 0 && user_data.unique_len > 0 {
+                    let copy_len = core::cmp::min(user_data.unique_len, full_len) as usize;
+                    current_userspace!()
+                        .write_bytes(user_data.unique as usize, &unique[..copy_len])?;
+                }
+
+                user_data.unique_len = full_len;
                 cmd.write(&user_data)?;
                 Ok(0)
             }
