@@ -16,9 +16,9 @@
   '';
 
   # Uncomment the three options below to enable the X11 (X.Org) desktop (XFCE).
-  # hardware.graphics.enable = true;
-  # services.xserver.enable = true;
-  # services.xserver.desktopManager.xfce.enable = true;
+  hardware.graphics.enable = true;
+  services.xserver.enable = true;
+  services.xserver.desktopManager.xfce.enable = true;
 
   # Uncomment the following line to enable Podman.
   # virtualisation.podman.enable = true;
@@ -27,6 +27,8 @@
   # You can use https://search.nixos.org/ to find more packages (and options).
   environment.systemPackages = with pkgs; [ 
     hello-asterinas
+    vim
+    git
 
     # Uncomment the options below to use test-tools and games.
     # mesa-demos

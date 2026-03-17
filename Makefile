@@ -56,7 +56,7 @@ DNS_SERVER ?= none
 # End of network settings
 
 # NixOS settings
-NIXOS_DISK_SIZE_IN_MB ?= 8192
+NIXOS_DISK_SIZE_IN_MB ?= 20480
 NIXOS_DISABLE_SYSTEMD ?= false
 NIXOS_TEST_COMMAND ?=
 # The following option is only effective when NIXOS_DISABLE_SYSTEMD is set to 'true'.
