@@ -3282,7 +3282,6 @@ impl FileIo for DrmFile {
 
                 // If the device reports no capsets, behave like Linux and return ENOSYS.
                 if virtio_gpu.num_capsets() == 0 {
-                    println!("virtio-gpu: device has no capsets, rejecting GET_CAPS");
                     return_errno!(Errno::ENOSYS);
                 }
 
