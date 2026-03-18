@@ -133,6 +133,16 @@ pub struct DrmModeCrtc {
     pub mode: DrmModeModeInfo,
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod)]
+pub struct DrmModeCrtcPageFlip {
+    pub crtc_id: u32,
+    pub fb_id: u32,
+    pub flags: u32,
+    pub reserved: u32,
+    pub user_data: u64,
+}
+
 #[repr(u32)]
 #[derive(Debug, TryFromInt)]
 pub enum DrmModeCursorFlags {
@@ -438,6 +448,7 @@ impl DrmModeObjectGetProps {
 
 pub const DRM_MODE_PAGE_FLIP_EVENT: u32 = 0x1;
 pub const DRM_MODE_PAGE_FLIP_ASYNC: u32 = 0x2;
+pub const DRM_MODE_PAGE_FLIP_FLAGS: u32 = DRM_MODE_PAGE_FLIP_EVENT | DRM_MODE_PAGE_FLIP_ASYNC;
 pub const DRM_MODE_ATOMIC_TEST_ONLY: u32 = 0x0100;
 pub const DRM_MODE_ATOMIC_NONBLOCK: u32 = 0x0200;
 pub const DRM_MODE_ATOMIC_ALLOW_MODESET: u32 = 0x0400;

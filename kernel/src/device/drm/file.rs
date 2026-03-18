@@ -1723,6 +1723,57 @@ impl FileIo for DrmFile {
 
                 Ok(0)
             }
+            cmd @ DrmIoctlModePageFlip => {
+                if !self.device.check_feature(DrmDriverFeatures::MODESET) {
+                    return_errno!(Errno::EOPNOTSUPP);
+                }
+
+                let user_data: DrmModeCrtcPageFlip = cmd.read()?;
+                if user_data.reserved != 0 {
+                    return_errno!(Errno::EINVAL);
+                }
+                if (user_data.flags & !DRM_MODE_PAGE_FLIP_FLAGS) != 0 {
+                    return_errno!(Errno::EINVAL);
+                }
+
+                let mode_config = self.device.resources().lock();
+                let crtc = mode_config
+                    .get_crtc(&user_data.crtc_id)
+                    .ok_or_else(|| Error::new(Errno::ENOENT))?;
+                let drm_framebuffer = mode_config
+                    .lookup_framebuffer(&user_data.fb_id)
+                    .ok_or_else(|| Error::new(Errno::ENOENT))?;
+
+                let mut crtc_req = DrmModeCrtc {
+                    set_connectors_ptr: 0,
+                    count_connectors: 0,
+                    crtc_id: user_data.crtc_id,
+                    fb_id: user_data.fb_id,
+                    x: 0,
+                    y: 0,
+                    gamma_size: 0,
+                    mode_valid: 0,
+                    mode: DrmModeModeInfo::default(),
+                };
+                (crtc_req.x, crtc_req.y) = crtc.xy();
+
+                crtc.funcs
+                    .set_config(crtc.clone(), drm_framebuffer, &crtc_req)
+                    .map_err(|_| Error::new(Errno::EINVAL))?;
+                crtc.update_primary_plane_state(user_data.fb_id);
+
+                if (user_data.flags & DRM_MODE_PAGE_FLIP_EVENT) != 0 {
+                    let sequence = crtc.vblank_state().lock().counter() as u32;
+                    self.queue_drm_event(self.make_flip_complete_event(
+                        user_data.user_data,
+                        user_data.crtc_id,
+                        sequence,
+                    ));
+                }
+
+                cmd.write(&user_data)?;
+                Ok(0)
+            }
             cmd @ DrmIoctlModeCursor => {
                 let _user_data: DrmModeCursor = cmd.read()?;
 
