@@ -3361,7 +3361,10 @@ impl FileIo for DrmFile {
                     }
                 };
 
-                user_data.value = value;
+                if user_data.value == 0 {
+                    return_errno!(Errno::EFAULT);
+                }
+                current_userspace!().write_val(user_data.value as usize, &value)?;
                 cmd.write(&user_data)?;
                 Ok(0)
             }
