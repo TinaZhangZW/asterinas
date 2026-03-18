@@ -804,6 +804,34 @@ impl DrmFile {
         }
     }
 
+    fn wait_sync_point(&self, point: &Arc<DrmSyncPoint>, timeout: Option<Duration>) -> Result<bool> {
+        if point.is_signaled() {
+            return Ok(true);
+        }
+
+        let wait_res = point
+            .wait_queue
+            .wait_until_or_timeout(|| point.is_signaled().then_some(()), timeout.as_ref());
+
+        match wait_res {
+            Ok(()) => Ok(true),
+            Err(err) if err.error() == Errno::ETIME => Ok(false),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn sync_file_point(&self, file: &Arc<dyn FileLike>) -> Result<Arc<DrmSyncPoint>> {
+        let sync_file = file
+            .downcast_ref::<DrmSyncFile>()
+            .ok_or_else(|| Error::new(Errno::EINVAL))?;
+        Ok(sync_file.fence().sync_point())
+    }
+
+    fn sync_file_point_by_fd(&self, fd: i32) -> Result<Arc<DrmSyncPoint>> {
+        let file = self.current_file_by_fd(fd)?;
+        self.sync_file_point(&file)
+    }
+
     fn current_file_by_fd(&self, fd: i32) -> Result<Arc<dyn FileLike>> {
         if fd < 0 {
             return_errno!(Errno::EINVAL);
@@ -2340,6 +2368,7 @@ impl FileIo for DrmFile {
                 struct PendingPlaneState {
                     crtc_id: Option<u32>,
                     fb_id: Option<u32>,
+                    in_fence_fd: Option<i32>,
                 }
 
                 #[derive(Clone, Copy, Default)]
@@ -2478,9 +2507,19 @@ impl FileIo for DrmFile {
                                         pending_planes.entry(*obj_id).or_default().fb_id =
                                             Some(prop_value as u32);
                                     } else if prop_name == "IN_FENCE_FD" {
-                                        // We currently only support the default "no fence" input.
-                                        if prop_value != u64::MAX {
-                                            return_errno!(Errno::EOPNOTSUPP);
+                                        let pending = pending_planes.entry(*obj_id).or_default();
+                                        if prop_value == u64::MAX
+                                            || prop_value == u32::MAX as u64
+                                        {
+                                            pending.in_fence_fd = None;
+                                        } else {
+                                            let Ok(in_fence_fd) = i32::try_from(prop_value) else {
+                                                return_errno!(Errno::EINVAL);
+                                            };
+                                            if in_fence_fd < 0 {
+                                                return_errno!(Errno::EINVAL);
+                                            }
+                                            pending.in_fence_fd = Some(in_fence_fd);
                                         }
                                     }
                                 }
@@ -2540,6 +2579,14 @@ impl FileIo for DrmFile {
                     }
                 }
 
+                let mut in_fence_points = Vec::new();
+                for state in pending_planes.values() {
+                    let Some(in_fence_fd) = state.in_fence_fd else {
+                        continue;
+                    };
+                    in_fence_points.push(self.sync_file_point_by_fd(in_fence_fd)?);
+                }
+
                 // Linux writes -1 to OUT_FENCE_PTR before commit, and keeps -1 on TEST_ONLY.
                 for state in pending_crtcs.values() {
                     if let Some(out_fence_ptr) = state.out_fence_ptr {
@@ -2552,6 +2599,10 @@ impl FileIo for DrmFile {
                 if (user_data.flags & DRM_MODE_ATOMIC_TEST_ONLY) != 0 {
                     cmd.write(&user_data)?;
                     return Ok(0);
+                }
+
+                for point in &in_fence_points {
+                    self.wait_sync_point(point, None)?;
                 }
 
                 let mut out_fence_signals: Vec<Arc<DrmSyncPoint>> = Vec::new();
@@ -2725,15 +2776,23 @@ impl FileIo for DrmFile {
                 if (user_data.flags & !virtio_gpu_drm::VIRTGPU_EXECBUF_FLAGS) != 0 {
                     return_errno!(Errno::EINVAL);
                 }
-                if (user_data.flags
-                    & (virtio_gpu_drm::VIRTGPU_EXECBUF_FENCE_FD_IN
-                        | virtio_gpu_drm::VIRTGPU_EXECBUF_FENCE_FD_OUT))
-                    != 0
-                {
-                    return_errno!(Errno::EOPNOTSUPP);
-                }
                 if user_data.size == 0 || user_data.command == 0 {
                     return_errno!(Errno::EINVAL);
+                }
+
+                let in_fence_fd = if (user_data.flags & virtio_gpu_drm::VIRTGPU_EXECBUF_FENCE_FD_IN)
+                    != 0
+                {
+                    Some(user_data.fence_fd)
+                } else {
+                    None
+                };
+                let out_fence_fd_requested =
+                    (user_data.flags & virtio_gpu_drm::VIRTGPU_EXECBUF_FENCE_FD_OUT) != 0;
+
+                if let Some(in_fence_fd) = in_fence_fd {
+                    let in_fence_point = self.sync_file_point_by_fd(in_fence_fd)?;
+                    self.wait_sync_point(&in_fence_point, None)?;
                 }
 
                 let mut command = vec![0u8; user_data.size as usize];
@@ -2828,6 +2887,13 @@ impl FileIo for DrmFile {
                     if sync.point == 0 {
                         syncobj.binary_signal();
                     }
+                }
+
+                if out_fence_fd_requested {
+                    let sync_point = Arc::new(DrmSyncPoint::new(true));
+                    let fence = Arc::new(DmaFence::from_sync_point(sync_point));
+                    let fd_file: Arc<dyn FileLike> = Arc::new(DrmSyncFile::new(fence));
+                    user_data.fence_fd = self.install_current_fd(fd_file, true)?;
                 }
                 self.syncobj_wait_queue.wake_all();
 
