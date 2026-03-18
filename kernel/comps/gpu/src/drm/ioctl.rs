@@ -50,6 +50,16 @@ bitflags::bitflags! {
     }
 }
 
+pub const DRM_RDWR: u32 = 0x2;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod)]
+pub struct DrmPrimeHandle {
+    pub handle: u32,
+    pub flags: u32,
+    pub fd: i32,
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod)]
 pub struct DrmGetCap {

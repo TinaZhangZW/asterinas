@@ -12,7 +12,8 @@ use aster_gpu::drm::{
     },
 };
 use hashbrown::HashMap;
-use alloc::collections::{BTreeSet, VecDeque};
+use alloc::{collections::{BTreeSet, VecDeque}, sync::Weak};
+use spin::Once;
 use ostd::mm::{VmIo, io_util::HasVmReaderWriter, HasPaddr, HasSize};
 use ostd::sync::WaitQueue;
 use ostd::Pod;
@@ -37,7 +38,8 @@ use crate::{
         inode_handle::FileIo,
         path::RESERVED_MOUNT_ID,
         pseudofs::AnonInodeFs,
-        utils::{CreationFlags, Inode, InodeIo, StatusFlags},
+        ramfs::memfd::{MemfdFile, MemfdInode},
+        utils::{AccessMode, CreationFlags, Inode, InodeIo, OpenArgs, StatusFlags, mkmod},
     },
     prelude::*,
     process::{
@@ -278,6 +280,11 @@ static DMA_FENCE_CONTEXT_ALLOC: AtomicU64 = AtomicU64::new(1);
 static DMA_FENCE_SEQNO_ALLOC: AtomicU64 = AtomicU64::new(1);
 static DRM_MAGIC_ALLOC: AtomicU32 = AtomicU32::new(1);
 static DRM_MAGIC_TABLE: Mutex<BTreeSet<u32>> = Mutex::new(BTreeSet::new());
+static DRM_PRIME_MEMFD_ONCE: Once<Mutex<HashMap<usize, Weak<DrmGemObject>>>> = Once::new();
+
+fn drm_prime_memfd_table() -> &'static Mutex<HashMap<usize, Weak<DrmGemObject>>> {
+    DRM_PRIME_MEMFD_ONCE.call_once(|| Mutex::new(HashMap::new()))
+}
 
 /// Minimal in-kernel dma_fence-like abstraction.
 ///
@@ -825,6 +832,98 @@ impl DrmFile {
             FdFlags::empty()
         };
         Ok(file_table.unwrap().write().insert(file, flags))
+    }
+
+    fn gem_handle_to_prime_fd(&self, handle: u32, flags: u32) -> Result<i32> {
+        let known_flags = CreationFlags::O_CLOEXEC.bits() | DRM_RDWR;
+        if (flags & !known_flags) != 0 {
+            return_errno!(Errno::EINVAL);
+        }
+
+        let Some(gem_obj) = self.lookup_gem(&handle) else {
+            return_errno!(Errno::ENOENT);
+        };
+
+        // Our GEM objects are memfd-backed today; expose that memfd as PRIME fd.
+        let drm_memfd = gem_obj
+            .downcast_ref::<DrmMemfdFile>()
+            .ok_or_else(|| Error::new(Errno::EOPNOTSUPP))?;
+
+        let memfd_inode = match drm_memfd.mappable()? {
+            Mappable::Inode(inode) => Arc::downcast::<MemfdInode>(inode)
+                .map_err(|_| Error::new(Errno::EOPNOTSUPP))?,
+            _ => return_errno!(Errno::EOPNOTSUPP),
+        };
+
+        // PRIME import looks up GEM objects by backing inode, so we publish
+        // this export in a global table shared by all DRM file descriptors.
+        drm_prime_memfd_table()
+            .lock()
+            .insert(Arc::as_ptr(&memfd_inode) as usize, Arc::downgrade(&gem_obj));
+
+        let open_args = OpenArgs::from_modes(AccessMode::O_RDWR, mkmod!(u+rw));
+        let file: Arc<dyn FileLike> = Arc::new(MemfdFile::open(memfd_inode, open_args)?);
+
+        let cloexec = (flags & CreationFlags::O_CLOEXEC.bits()) != 0;
+        self.install_current_fd(file, cloexec)
+    }
+
+    fn gem_prime_fd_to_handle(&self, fd: i32, flags: u32) -> Result<u32> {
+        // Linux expects PRIME_FD_TO_HANDLE flags to be zero today.
+        if flags != 0 {
+            return_errno!(Errno::EINVAL);
+        }
+
+        let file = self.current_file_by_fd(fd)?;
+        let memfd = file
+            .downcast_ref::<MemfdFile>()
+            .ok_or_else(|| Error::new(Errno::EINVAL))?;
+
+        let memfd_inode = match memfd.mappable()? {
+            Mappable::Inode(inode) => Arc::downcast::<MemfdInode>(inode)
+                .map_err(|_| Error::new(Errno::EINVAL))?,
+            _ => return_errno!(Errno::EINVAL),
+        };
+
+        let inode_key = Arc::as_ptr(&memfd_inode) as usize;
+
+        // Reuse an existing per-file handle when this GEM was already imported.
+        if let Some((handle, _)) = self
+            .gem_table
+            .lock()
+            .iter()
+            .find(|(_, gem)| {
+                gem.downcast_ref::<DrmMemfdFile>()
+                    .and_then(|drm_memfd| match drm_memfd.mappable() {
+                        Ok(Mappable::Inode(inode)) => {
+                            Arc::downcast::<MemfdInode>(inode).ok().map(|inode| {
+                                Arc::as_ptr(&inode) as usize == inode_key
+                            })
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or(false)
+            })
+            .map(|(handle, gem)| (*handle, gem.clone()))
+        {
+            return Ok(handle);
+        }
+
+        let gem_obj = {
+            let mut table = drm_prime_memfd_table().lock();
+            let Some(weak) = table.get(&inode_key).cloned() else {
+                return_errno!(Errno::ENOENT);
+            };
+            let Some(gem_obj) = weak.upgrade() else {
+                table.remove(&inode_key);
+                return_errno!(Errno::ENOENT);
+            };
+            gem_obj
+        };
+
+        let handle = self.next_handle();
+        self.insert_gem(handle, gem_obj);
+        Ok(handle)
     }
 
     fn virtio_gpu_param_value(&self, param: u64) -> Result<Option<u64>> {
@@ -1385,6 +1484,18 @@ impl FileIo for DrmFile {
             cmd @ DrmIoctlGemClose => {
                 let user_data: DrmGemClose = cmd.read()?;
                 self.close_gem_handle(user_data.handle)?;
+                Ok(0)
+            }
+            cmd @ DrmIoctlPrimeHandleToFd => {
+                let mut user_data: DrmPrimeHandle = cmd.read()?;
+                user_data.fd = self.gem_handle_to_prime_fd(user_data.handle, user_data.flags)?;
+                cmd.write(&user_data)?;
+                Ok(0)
+            }
+            cmd @ DrmIoctlPrimeFdToHandle => {
+                let mut user_data: DrmPrimeHandle = cmd.read()?;
+                user_data.handle = self.gem_prime_fd_to_handle(user_data.fd, user_data.flags)?;
+                cmd.write(&user_data)?;
                 Ok(0)
             }
             _cmd @ DrmIoctlSetMaster => {
