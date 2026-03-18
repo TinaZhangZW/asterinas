@@ -319,6 +319,7 @@ struct VirtioGpuContextState {
     debug_name: [u8; VIRTGPU_DEBUG_NAME_MAX_LEN],
     debug_name_len: usize,
     explicit_debug_name: bool,
+    attached_resources: BTreeSet<u32>,
 }
 
 impl VirtioGpuContextState {
@@ -333,6 +334,7 @@ impl VirtioGpuContextState {
             debug_name: [0; VIRTGPU_DEBUG_NAME_MAX_LEN],
             debug_name_len: 0,
             explicit_debug_name: false,
+            attached_resources: BTreeSet::new(),
         }
     }
 
@@ -1097,6 +1099,24 @@ impl DrmFile {
         Ok(ctx_id)
     }
 
+    fn virtio_gpu_attach_resource_locked(
+        &self,
+        virtio_gpu: &Arc<VirtioGpuDevice>,
+        state: &mut VirtioGpuContextState,
+        resource_id: u32,
+    ) -> Result<()> {
+        if state.attached_resources.contains(&resource_id) {
+            return Ok(());
+        }
+
+        let ctx_id = self.ensure_virtio_gpu_context_locked(virtio_gpu, state)?;
+        virtio_gpu
+            .context_attach_resource(ctx_id, resource_id)
+            .map_err(|_| Error::new(Errno::EIO))?;
+        state.attached_resources.insert(resource_id);
+        Ok(())
+    }
+
     fn virtio_gpu_ring_idx(&self, requested: bool, ring_idx: u32) -> Result<Option<u8>> {
         if !requested {
             return Ok(None);
@@ -1144,6 +1164,14 @@ impl DrmFile {
 
         // Keep virtio resource lifetime in sync with GEM handle lifetime.
         if driver_name == "virtio_gpu" {
+            if let Some(virtio_gpu) = self.virtio_gpu_device() {
+                if let Ok(resource_id) = virtio_gpu_obj_resource_id(&gem_obj) {
+                    let mut state = self.virtio_gpu_context.lock();
+                    if state.context_created && state.attached_resources.remove(&resource_id) {
+                        let _ = virtio_gpu.context_detach_resource(state.ctx_id, resource_id);
+                    }
+                }
+            }
             let _ = virtio_gpu_object_unref(&gem_obj);
         }
 
@@ -2847,11 +2875,23 @@ impl FileIo for DrmFile {
                     }
                 }
 
-                let ctx_id = self.ensure_virtio_gpu_context(&virtio_gpu)?;
                 let ring_idx = self.virtio_gpu_ring_idx(
                     (user_data.flags & virtio_gpu_drm::VIRTGPU_EXECBUF_RING_IDX) != 0,
                     user_data.ring_idx,
                 )?;
+
+                let mut state = self.virtio_gpu_context.lock();
+                let ctx_id = self.ensure_virtio_gpu_context_locked(&virtio_gpu, &mut state)?;
+
+                for bo_handle in &bo_handles {
+                    let gem_obj = self
+                        .lookup_gem(bo_handle)
+                        .ok_or_else(|| Error::new(Errno::ENOENT))?;
+                    let resource_id =
+                        virtio_gpu_obj_resource_id(&gem_obj).map_err(|_| Error::new(Errno::EINVAL))?;
+                    self.virtio_gpu_attach_resource_locked(&virtio_gpu, &mut state, resource_id)?;
+                }
+                drop(state);
 
                 for bo_handle in &bo_handles {
                     self.reset_gem_wait_point(bo_handle);
@@ -3537,7 +3577,13 @@ impl FileIo for DrmFile {
                 }
 
                 if user_data.cmd_size != 0 {
-                    let ctx_id = self.ensure_virtio_gpu_context(&virtio_gpu)?;
+                    // For legacy virgl resources, TRANSFER_*_3D must use ctx_id = 0.
+                    // Only host3d blob resources are context-bound at the control path.
+                    let ctx_id = if host3d_blob {
+                        self.ensure_virtio_gpu_context(&virtio_gpu)?
+                    } else {
+                        0
+                    };
                     let mut command = vec![0u8; user_data.cmd_size as usize];
                     current_userspace!().read_bytes(user_data.cmd as usize, &mut command)?;
                     virtio_gpu
@@ -3737,7 +3783,13 @@ impl FileIo for DrmFile {
                 let resource_id =
                     virtio_gpu_obj_resource_id(&gem_obj).map_err(|_| Error::new(Errno::EINVAL))?;
 
-                let ctx_id = self.ensure_virtio_gpu_context(&virtio_gpu)?;
+                // For legacy virgl resources, TRANSFER_*_3D must use ctx_id = 0.
+                // Only host3d blob resources are context-bound at the control path.
+                let ctx_id = if host3d_blob {
+                    self.ensure_virtio_gpu_context(&virtio_gpu)?
+                } else {
+                    0
+                };
 
                 self.reset_gem_wait_point(&user_data.bo_handle);
 
@@ -3805,7 +3857,13 @@ impl FileIo for DrmFile {
                     self.signal_gem_wait_point(&user_data.bo_handle);
                     transfer_result?;
                 } else {
-                    let ctx_id = self.ensure_virtio_gpu_context(&virtio_gpu)?;
+                    // For legacy virgl resources, TRANSFER_*_3D must use ctx_id = 0.
+                    // Only host3d blob resources are context-bound at the control path.
+                    let ctx_id = if host3d_blob {
+                        self.ensure_virtio_gpu_context(&virtio_gpu)?
+                    } else {
+                        0
+                    };
 
                     if !host3d_blob && (user_data.stride != 0 || user_data.layer_stride != 0) {
                         self.signal_gem_wait_point(&user_data.bo_handle);

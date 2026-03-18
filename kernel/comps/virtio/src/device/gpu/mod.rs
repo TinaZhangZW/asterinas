@@ -35,6 +35,8 @@ pub(super) const CMD_GET_EDID: u32 = 0x010a;
 pub(super) const CMD_RESOURCE_CREATE_BLOB: u32 = 0x010c;
 pub(super) const CMD_CTX_CREATE: u32 = 0x0200;
 pub(super) const CMD_CTX_DESTROY: u32 = 0x0201;
+pub(super) const CMD_CTX_ATTACH_RESOURCE: u32 = 0x0202;
+pub(super) const CMD_CTX_DETACH_RESOURCE: u32 = 0x0203;
 pub(super) const CMD_RESOURCE_CREATE_3D: u32 = 0x0204;
 pub(super) const CMD_TRANSFER_TO_HOST_3D: u32 = 0x0205;
 pub(super) const CMD_TRANSFER_FROM_HOST_3D: u32 = 0x0206;
@@ -324,6 +326,14 @@ impl Default for VirtioGpuCtxCreate {
 #[repr(C)]
 pub struct VirtioGpuCtxDestroy {
     pub hdr: VirtioGpuCtrlHdr,
+}
+
+#[derive(Debug, Clone, Copy, Default, Pod)]
+#[repr(C)]
+pub struct VirtioGpuCtxResource {
+    pub hdr: VirtioGpuCtrlHdr,
+    pub resource_id: u32,
+    pub padding: u32,
 }
 
 #[derive(Debug, Clone, Copy, Default, Pod)]

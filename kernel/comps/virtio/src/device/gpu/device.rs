@@ -14,7 +14,7 @@ use ostd::{
     sync::SpinLock,
 };
 use ostd::prelude::println;
-use super::{CMD_CTX_CREATE, CMD_CTX_DESTROY, CMD_GET_CAPSET, CMD_GET_CAPSET_INFO,
+use super::{CMD_CTX_ATTACH_RESOURCE, CMD_CTX_CREATE, CMD_CTX_DESTROY, CMD_CTX_DETACH_RESOURCE, CMD_GET_CAPSET, CMD_GET_CAPSET_INFO,
     CMD_GET_DISPLAY_INFO, CMD_GET_EDID, CMD_RESOURCE_ATTACH_BACKING,
     CMD_RESOURCE_CREATE_2D, CMD_RESOURCE_CREATE_3D, CMD_RESOURCE_CREATE_BLOB, CMD_RESOURCE_UNREF,
     CMD_RESOURCE_DETACH_BACKING, CMD_RESOURCE_FLUSH, CMD_TRANSFER_FROM_HOST_3D,
@@ -22,7 +22,7 @@ use super::{CMD_CTX_CREATE, CMD_CTX_DESTROY, CMD_GET_CAPSET, CMD_GET_CAPSET_INFO
     DEVICE_NAME, GpuFeatures, QUEUE_CONTROL,
     QUEUE_CURSOR, RESP_OK_CAPSET, RESP_OK_CAPSET_INFO, RESP_OK_DISPLAY_INFO, RESP_OK_EDID, RESP_OK_NODATA,
     VirtioGpuConfig, VirtioGpuCtrlHdr, VirtioGpuDisplayOne, VirtioGpuFormat, VirtioGpuGetCapset, VirtioGpuGetCapsetInfo,
-    VirtioGpuCtxCreate, VirtioGpuCtxDestroy, VirtioGpuGetEdid, VirtioGpuMemEntry, VirtioGpuRect, VirtioGpuResourceAttachBacking,
+    VirtioGpuCtxCreate, VirtioGpuCtxDestroy, VirtioGpuCtxResource, VirtioGpuGetEdid, VirtioGpuMemEntry, VirtioGpuRect, VirtioGpuResourceAttachBacking,
     VirtioGpuResourceUnref, VirtioGpuResourceDetachBacking,
     VirtioGpuResourceCreate2d, VirtioGpuResourceCreate3d, VirtioGpuResourceCreateBlob, VirtioGpuRespCapsetInfo, VirtioGpuRespDisplayInfo,
     VirtioGpuRespEdid, VirtioGpuResourceFlush, VirtioGpuTransferHost3d, VirtioGpuTransferToHost2d, VirtioGpuSetScanout, VirtioGpuCmdSubmit,
@@ -81,6 +81,9 @@ const CTRL_REQ_STRIDE: usize = {
     }
     if size_of::<VirtioGpuCtxDestroy>() > max {
         max = size_of::<VirtioGpuCtxDestroy>();
+    }
+    if size_of::<VirtioGpuCtxResource>() > max {
+        max = size_of::<VirtioGpuCtxResource>();
     }
     max
 };
@@ -426,6 +429,46 @@ impl VirtioGpuDevice {
 
         let _: VirtioGpuCtrlHdr =
             self.submit_control_command::<VirtioGpuCtxDestroy, VirtioGpuCtrlHdr>(&req, RESP_OK_NODATA)?;
+        Ok(())
+    }
+
+    pub fn context_attach_resource(
+        &self,
+        context_id: u32,
+        resource_id: u32,
+    ) -> Result<(), VirtioGpuCommandError> {
+        let req = VirtioGpuCtxResource {
+            hdr: VirtioGpuCtrlHdr {
+                type_: CMD_CTX_ATTACH_RESOURCE,
+                ctx_id: context_id,
+                ..Default::default()
+            },
+            resource_id,
+            padding: 0,
+        };
+
+        let _: VirtioGpuCtrlHdr =
+            self.submit_control_command::<VirtioGpuCtxResource, VirtioGpuCtrlHdr>(&req, RESP_OK_NODATA)?;
+        Ok(())
+    }
+
+    pub fn context_detach_resource(
+        &self,
+        context_id: u32,
+        resource_id: u32,
+    ) -> Result<(), VirtioGpuCommandError> {
+        let req = VirtioGpuCtxResource {
+            hdr: VirtioGpuCtrlHdr {
+                type_: CMD_CTX_DETACH_RESOURCE,
+                ctx_id: context_id,
+                ..Default::default()
+            },
+            resource_id,
+            padding: 0,
+        };
+
+        let _: VirtioGpuCtrlHdr =
+            self.submit_control_command::<VirtioGpuCtxResource, VirtioGpuCtrlHdr>(&req, RESP_OK_NODATA)?;
         Ok(())
     }
 
