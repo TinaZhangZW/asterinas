@@ -153,7 +153,10 @@ impl CrtcFuncs for VirtioCrtcFuncs {
     ) -> Result<(), DrmError> {
         let gem_object = fb.gem_object();
         let resource_id = crate::device::gpu::drm::gem::virtio_gpu_obj_resource_id(&gem_object)?;
-        // no separate backing buffer; pages are pinned and flushed on-demand
+        let (guest_blob, host3d_blob) =
+            crate::device::gpu::drm::gem::virtio_gpu_blob_state_by_gem(&gem_object)?;
+        let is_dumb = crate::device::gpu::drm::gem::virtio_gpu_is_dumb_by_gem(&gem_object)?;
+        let is_blob = guest_blob || host3d_blob;
 
         // Keep legacy modeset path simple and robust: scan out the whole FB.
         // Most userspace (including the double-buffer sample) uses x=y=0 and
@@ -170,13 +173,30 @@ impl CrtcFuncs for VirtioCrtcFuncs {
         };
         let scanout_id = crtc.index() as u32;
 
-        // ensure the host-side 2D resource sees the latest guest framebuffer contents
-        // some devices (older qemu) may not implement this command; failure is
-        // non‑fatal so we log it and continue with flush+scanout.
-        self.vgpu.transfer_to_host_2d(resource_id, rect, 0);
-        self.vgpu
-            .set_scanout(scanout_id, resource_id, rect)
-            .map_err(|_| DrmError::Invalid)?;
+        if is_blob {
+            // Linux uses SET_SCANOUT_BLOB for blob resources.
+            // Our fb object is single-plane XRGB8888 today.
+            self.vgpu
+                .set_scanout_blob(
+                    scanout_id,
+                    resource_id,
+                    rect,
+                    width,
+                    height,
+                    crate::device::gpu::VirtioGpuFormat::B8G8R8X8Unorm as u32,
+                    [fb.pitch(), 0, 0, 0],
+                    [0, 0, 0, 0],
+                )
+                .map_err(|_| DrmError::Invalid)?;
+        } else {
+            // Linux only issues TRANSFER_TO_HOST_2D for dumb buffers.
+            if is_dumb {
+                let _ = self.vgpu.transfer_to_host_2d(resource_id, rect, 0);
+            }
+            self.vgpu
+                .set_scanout(scanout_id, resource_id, rect)
+                .map_err(|_| DrmError::Invalid)?;
+        }
         // and finally flush to update the currently bound scanout
         self.vgpu
             .resource_flush(resource_id, rect)

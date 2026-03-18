@@ -3577,13 +3577,9 @@ impl FileIo for DrmFile {
                 }
 
                 if user_data.cmd_size != 0 {
-                    // For legacy virgl resources, TRANSFER_*_3D must use ctx_id = 0.
-                    // Only host3d blob resources are context-bound at the control path.
-                    let ctx_id = if host3d_blob {
-                        self.ensure_virtio_gpu_context(&virtio_gpu)?
-                    } else {
-                        0
-                    };
+                    // cmd payload submission is only valid for host3d blobs.
+                    // That path is context-bound and uses the per-file virgl context.
+                    let ctx_id = self.ensure_virtio_gpu_context(&virtio_gpu)?;
                     let mut command = vec![0u8; user_data.cmd_size as usize];
                     current_userspace!().read_bytes(user_data.cmd as usize, &mut command)?;
                     virtio_gpu
@@ -3783,13 +3779,10 @@ impl FileIo for DrmFile {
                 let resource_id =
                     virtio_gpu_obj_resource_id(&gem_obj).map_err(|_| Error::new(Errno::EINVAL))?;
 
-                // For legacy virgl resources, TRANSFER_*_3D must use ctx_id = 0.
-                // Only host3d blob resources are context-bound at the control path.
-                let ctx_id = if host3d_blob {
-                    self.ensure_virtio_gpu_context(&virtio_gpu)?
-                } else {
-                    0
-                };
+                let mut state = self.virtio_gpu_context.lock();
+                let ctx_id = self.ensure_virtio_gpu_context_locked(&virtio_gpu, &mut state)?;
+                self.virtio_gpu_attach_resource_locked(&virtio_gpu, &mut state, resource_id)?;
+                drop(state);
 
                 self.reset_gem_wait_point(&user_data.bo_handle);
 
@@ -3857,13 +3850,10 @@ impl FileIo for DrmFile {
                     self.signal_gem_wait_point(&user_data.bo_handle);
                     transfer_result?;
                 } else {
-                    // For legacy virgl resources, TRANSFER_*_3D must use ctx_id = 0.
-                    // Only host3d blob resources are context-bound at the control path.
-                    let ctx_id = if host3d_blob {
-                        self.ensure_virtio_gpu_context(&virtio_gpu)?
-                    } else {
-                        0
-                    };
+                    let mut state = self.virtio_gpu_context.lock();
+                    let ctx_id = self.ensure_virtio_gpu_context_locked(&virtio_gpu, &mut state)?;
+                    self.virtio_gpu_attach_resource_locked(&virtio_gpu, &mut state, resource_id)?;
+                    drop(state);
 
                     if !host3d_blob && (user_data.stride != 0 || user_data.layer_stride != 0) {
                         self.signal_gem_wait_point(&user_data.bo_handle);
