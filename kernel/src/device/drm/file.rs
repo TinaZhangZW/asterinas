@@ -21,7 +21,8 @@ use crate::vm::vmo::{CommitFlags};
 use aster_virtio::device::gpu::drm::gem::{
     VirtioGpuObjectParams, VirtioGpuSgEntry, VirtioGpuSgTable, virtio_gpu_blob_object_create, virtio_gpu_mode_dumb_create_with_sg,
     virtio_gpu_blob_mem_by_gem, virtio_gpu_blob_state_by_gem, virtio_gpu_create_hdr_by_gem,
-    virtio_gpu_obj_resource_id, virtio_gpu_object_create, virtio_gpu_object_unref,
+    virtio_gpu_is_dumb_by_gem, virtio_gpu_obj_resource_id, virtio_gpu_object_create,
+    virtio_gpu_object_unref,
 };
 
 use crate::{
@@ -1257,7 +1258,6 @@ impl FileIo for DrmFile {
     fn ioctl(&self, raw_ioctl: RawIoctl) -> Result<i32> {
         // TODO: Call GpuDevice.handle_command() if it needs device specific ioctl handling.
         // TODO: drm_file permit flags check (master, root, render ...)
-        // println!("drm_file: ioctl cmd={:#x}", raw_ioctl.cmd());
         dispatch_ioctl!(match raw_ioctl {
             cmd @ DrmIoctlGetUnique => {
                 let mut user_data: DrmUnique = cmd.read()?;
@@ -2201,19 +2201,50 @@ impl FileIo for DrmFile {
 
                 let user_data: DrmModeFbDirtyCmd = cmd.read()?;
                 let fb_id = user_data.fb_id;
+                let mode_config = self.device.resources().lock();
+                let drm_framebuffer = mode_config
+                    .lookup_framebuffer(&fb_id)
+                    .ok_or_else(|| Error::new(Errno::ENOENT))?;
+
+                // For virtio-gpu scanout, DIRTYFB must flush the updated backing
+                // to host or software-rendered frames stay black.
+                if self.device.driver().name() == "virtio_gpu" {
+                    let Some(virtio_gpu) = self.virtio_gpu_device() else {
+                        return_errno!(Errno::ENODEV);
+                    };
+
+                    let gem_object = drm_framebuffer.gem_object();
+                    let resource_id =
+                        virtio_gpu_obj_resource_id(&gem_object).map_err(|_| Error::new(Errno::EINVAL))?;
+                    let is_dumb =
+                        virtio_gpu_is_dumb_by_gem(&gem_object).map_err(|_| Error::new(Errno::EINVAL))?;
+
+                    let rect = aster_virtio::device::gpu::VirtioGpuRect {
+                        x: 0,
+                        y: 0,
+                        width: drm_framebuffer.width(),
+                        height: drm_framebuffer.height(),
+                    };
+
+                    if is_dumb {
+                        virtio_gpu
+                            .transfer_to_host_2d(resource_id, rect, 0)
+                            .map_err(|_| Error::new(Errno::EIO))?;
+                    }
+                    virtio_gpu
+                        .resource_flush(resource_id, rect)
+                        .map_err(|_| Error::new(Errno::EIO))?;
+
+                    return Ok(0);
+                }
 
                 // TODO: just legacy achievement
                 if let Some(framebuffer) = FRAMEBUFFER.get() {
                     let iomem = framebuffer.io_mem();
                     let mut writer = iomem.writer().to_fallible();
 
-                    let mode_config = self.device.resources().lock();
-                    if let Some(drm_framebuffer) = mode_config.lookup_framebuffer(&fb_id) {
-                        // TODO: handle the error
-                        let _ = drm_framebuffer.read(0, &mut writer);
-                    } else {
-                        return_errno!(Errno::ENOENT);
-                    }
+                    // TODO: handle the error
+                    let _ = drm_framebuffer.read(0, &mut writer);
                 } else {
                     return_errno!(Errno::ENOENT);
                 }
