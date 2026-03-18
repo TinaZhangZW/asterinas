@@ -13,9 +13,9 @@ extern crate alloc;
 
 #[init_component]
 fn sysfb_component_init() -> Result<(), ComponentInitError> {
-    if FRAMEBUFFER.get().is_some() {
-        simpledrm::register_device();
-    }
-    simpledrm::register_driver();
+    // if FRAMEBUFFER.get().is_some() {
+    //     simpledrm::register_device();
+    // }
+    // simpledrm::register_driver();
     Ok(())
 }
