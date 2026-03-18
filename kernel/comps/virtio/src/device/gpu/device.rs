@@ -28,7 +28,7 @@ use super::{CMD_CTX_CREATE, CMD_CTX_DESTROY, CMD_GET_CAPSET, CMD_GET_CAPSET_INFO
     VirtioGpuRespEdid, VirtioGpuResourceFlush, VirtioGpuTransferHost3d, VirtioGpuTransferToHost2d, VirtioGpuSetScanout, VirtioGpuCmdSubmit,
 };
 use crate::{
-    device::{VirtioDeviceError, gpu::drm::VirtioGpuDrmDrvier},
+    device::{VirtioDeviceError, gpu::{self, drm::VirtioGpuDrmDrvier}},
     id_alloc::SyncIdAlloc,
     queue::{QueueError, VirtQueue},
     transport::{ConfigManager, VirtioTransport},
@@ -155,8 +155,15 @@ impl VirtioGpuDevice {
         assert!(CTRL_RESP_STRIDE * CTRL_QUEUE_SIZE as usize <= ctrl_responses.size());
 
         let device_features = transport.read_device_features();
-        let gpu_features = GpuFeatures::from_bits_truncate(device_features);
+        // Device-specific virtio feature bits live in 0..23 and 50..63.
+        // Mirror global negotiation so capability flags are based on the
+        // subset we actually accept, not the full offered feature set.
+        let device_feature_mask = ((1u64 << 24) - 1) | (((1u64 << 24) - 1) << 50);
+        let negotiated_gpu_features =
+            Self::negotiate_features(device_features & device_feature_mask);
+        let gpu_features = GpuFeatures::from_bits_truncate(negotiated_gpu_features);
         let mut caps = VirtioGpuCaps::empty();
+
         if cfg!(target_endian = "little") && gpu_features.contains(GpuFeatures::VIRGL) {
             caps.insert(VirtioGpuCaps::VIRGL_3D);
         }
