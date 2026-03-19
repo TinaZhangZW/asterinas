@@ -971,7 +971,9 @@ impl DrmFile {
             virtio_gpu_drm::VIRTGPU_PARAM_RESOURCE_BLOB => {
                 u64::from(virtio_gpu.has_resource_blob())
             }
-            virtio_gpu_drm::VIRTGPU_PARAM_HOST_VISIBLE => 0,
+            virtio_gpu_drm::VIRTGPU_PARAM_HOST_VISIBLE => {
+                u64::from(virtio_gpu.has_host_visible())
+            }
             virtio_gpu_drm::VIRTGPU_PARAM_CROSS_DEVICE => 0,
             virtio_gpu_drm::VIRTGPU_PARAM_CONTEXT_INIT => {
                 u64::from(virtio_gpu.has_context_init() && virtio_gpu.has_virgl_3d())

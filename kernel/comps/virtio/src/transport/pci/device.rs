@@ -55,6 +55,7 @@ pub struct VirtioPciModernTransport {
     common_cfg: SafePtr<VirtioPciCommonCfg, IoMem>,
     device_cfg: VirtioPciCapabilityData,
     notify: VirtioPciNotify,
+    shm_region_ids: alloc::collections::BTreeSet<u8>,
     msix_manager: VirtioMsixManager,
 }
 
@@ -143,6 +144,10 @@ impl VirtioTransport for VirtioPciModernTransport {
 
     fn device_config_bar(&self) -> Option<(Bar, usize)> {
         None
+    }
+
+    fn has_shm_region(&self, id: u8) -> bool {
+        self.shm_region_ids.contains(&id)
     }
 
     fn read_device_features(&self) -> u64 {
@@ -290,6 +295,7 @@ impl VirtioPciModernTransport {
         let mut notify = None;
         let mut common_cfg = None;
         let mut device_cfg = None;
+        let mut shm_region_ids = alloc::collections::BTreeSet::new();
         for cap in common_device.capabilities().iter() {
             match cap.capability_data() {
                 CapabilityData::Vndr(vendor) => {
@@ -310,6 +316,10 @@ impl VirtioPciModernTransport {
                             device_cfg = Some(data);
                         }
                         VirtioPciCpabilityType::PciCfg => {}
+                        VirtioPciCpabilityType::SharedMemoryCfg => {
+                            shm_region_ids.insert(data.id());
+                        }
+                        VirtioPciCpabilityType::VendorCfg => {}
                     }
                 }
                 CapabilityData::Msix(data) => {
@@ -334,6 +344,7 @@ impl VirtioPciModernTransport {
             common_cfg,
             device_cfg,
             notify,
+            shm_region_ids,
             msix_manager,
             device_type,
         })

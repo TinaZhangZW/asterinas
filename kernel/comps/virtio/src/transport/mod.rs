@@ -63,6 +63,12 @@ pub trait VirtioTransport: Sync + Send + Debug {
     /// Get access to the device config BAR space.
     fn device_config_bar(&self) -> Option<(Bar, usize)>;
 
+    /// Returns whether a transport-provided shared memory region exists for
+    /// the given region id.
+    fn has_shm_region(&self, _id: u8) -> bool {
+        false
+    }
+
     // ====================Virtqueue related APIs====================
 
     /// Get the total number of queues

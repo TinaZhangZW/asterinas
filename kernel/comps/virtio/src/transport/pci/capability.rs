@@ -18,11 +18,14 @@ pub enum VirtioPciCpabilityType {
     IsrCfg = 3,
     DeviceCfg = 4,
     PciCfg = 5,
+    SharedMemoryCfg = 8,
+    VendorCfg = 9,
 }
 
 #[derive(Debug, Clone)]
 pub struct VirtioPciCapabilityData {
     cfg_type: VirtioPciCpabilityType,
+    id: u8,
     offset: u32,
     length: u32,
     option: Option<u32>,
@@ -36,6 +39,10 @@ impl VirtioPciCapabilityData {
 
     pub fn offset(&self) -> u32 {
         self.offset
+    }
+
+    pub fn id(&self) -> u8 {
+        self.id
     }
 
     pub fn length(&self) -> u32 {
@@ -58,9 +65,12 @@ impl VirtioPciCapabilityData {
             3 => VirtioPciCpabilityType::IsrCfg,
             4 => VirtioPciCpabilityType::DeviceCfg,
             5 => VirtioPciCpabilityType::PciCfg,
+            8 => VirtioPciCpabilityType::SharedMemoryCfg,
+            9 => VirtioPciCpabilityType::VendorCfg,
             _ => panic!("Unsupported virtio capability type:{:?}", cfg_type),
         };
         let bar = vendor_cap.read8(4).unwrap();
+        let id = vendor_cap.read8(5).unwrap();
         let capability_length = vendor_cap.read8(2).unwrap();
         let offset = vendor_cap.read32(8).unwrap();
         let length = vendor_cap.read32(12).unwrap();
@@ -83,6 +93,7 @@ impl VirtioPciCapabilityData {
         };
         Self {
             cfg_type,
+            id,
             offset,
             length,
             option,

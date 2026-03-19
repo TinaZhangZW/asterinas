@@ -94,6 +94,7 @@ const CTRL_RESP_STRIDE: usize = size_of::<VirtioGpuRespEdid>();
 const VIRTIO_RING_F_INDIRECT_DESC: u64 = 1 << 28;
 const VIRTIO_GPU_FLAG_FENCE: u32 = 1 << 0;
 const VIRTIO_GPU_FLAG_INFO_RING_IDX: u32 = 1 << 1;
+const VIRTIO_GPU_SHM_ID_HOST_VISIBLE: u8 = 1;
 
 bitflags! {
     struct VirtioGpuCaps: u32 {
@@ -103,6 +104,7 @@ bitflags! {
         const RESOURCE_ASSIGN_UUID = 1 << 3;
         const RESOURCE_BLOB = 1 << 4;
         const CONTEXT_INIT = 1 << 5;
+        const HOST_VISIBLE = 1 << 6;
     }
 }
 
@@ -188,6 +190,10 @@ impl VirtioGpuDevice {
         if gpu_features.contains(GpuFeatures::CONTEXT_INIT) {
             caps.insert(VirtioGpuCaps::CONTEXT_INIT);
         }
+        if transport.has_shm_region(VIRTIO_GPU_SHM_ID_HOST_VISIBLE) {
+            println!("virtio-gpu device has host visible shared memory region");
+            caps.insert(VirtioGpuCaps::HOST_VISIBLE);
+        }
 
         let config_manager = VirtioGpuConfig::new_manager(transport.as_ref());
 
@@ -250,12 +256,13 @@ impl VirtioGpuDevice {
             config.num_scanouts, config.num_capsets
         );
         info!(
-            "virtio-gpu features: virgl_3d={}, edid={}, indirect_desc={}, resource_uuid={}, resource_blob={}, context_init={}",
+            "virtio-gpu features: virgl_3d={}, edid={}, indirect_desc={}, resource_uuid={}, resource_blob={}, host_visible={}, context_init={}",
             device.has_virgl_3d(),
             device.has_edid(),
             device.has_indirect(),
             device.has_resource_assign_uuid(),
             device.has_resource_blob(),
+            device.has_host_visible(),
             device.has_context_init()
         );
         *device.num_scanouts.lock() = config.num_scanouts;
@@ -1139,6 +1146,10 @@ impl VirtioGpuDevice {
 
     pub fn has_resource_blob(&self) -> bool {
         self.caps.contains(VirtioGpuCaps::RESOURCE_BLOB)
+    }
+
+    pub fn has_host_visible(&self) -> bool {
+        self.caps.contains(VirtioGpuCaps::HOST_VISIBLE)
     }
 
     pub fn has_context_init(&self) -> bool {
