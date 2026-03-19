@@ -195,6 +195,19 @@ impl VirtioGpuDevice {
             caps.insert(VirtioGpuCaps::HOST_VISIBLE);
         }
 
+        // Linux expects HOST_VISIBLE to be paired with RESOURCE_BLOB. Some
+        // virtual device setups may expose the host-visible shared-memory
+        // capability even when the resource-blob feature bit is not reflected
+        // in the offered feature bitmap seen by the guest.
+        if caps.contains(VirtioGpuCaps::HOST_VISIBLE)
+            && !caps.contains(VirtioGpuCaps::RESOURCE_BLOB)
+        {
+            warn!(
+                "virtio-gpu: inferring RESOURCE_BLOB from HOST_VISIBLE shared memory capability"
+            );
+            caps.insert(VirtioGpuCaps::RESOURCE_BLOB);
+        }
+
         let config_manager = VirtioGpuConfig::new_manager(transport.as_ref());
 
         // Read initial config so we can initialize spinlocks with sensible

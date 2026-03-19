@@ -965,24 +965,26 @@ impl DrmFile {
 
         let value = match param {
             virtio_gpu_drm::VIRTGPU_PARAM_3D_FEATURES => u64::from(virtio_gpu.has_virgl_3d()),
-            virtio_gpu_drm::VIRTGPU_PARAM_CAPSET_QUERY_FIX => {
-                u64::from(virtio_gpu.num_capsets() > 0)
-            }
+            // Linux reports CAPSET_QUERY_FIX as supported unconditionally.
+            virtio_gpu_drm::VIRTGPU_PARAM_CAPSET_QUERY_FIX => 1,
             virtio_gpu_drm::VIRTGPU_PARAM_RESOURCE_BLOB => {
                 u64::from(virtio_gpu.has_resource_blob())
             }
             virtio_gpu_drm::VIRTGPU_PARAM_HOST_VISIBLE => {
                 u64::from(virtio_gpu.has_host_visible())
             }
-            virtio_gpu_drm::VIRTGPU_PARAM_CROSS_DEVICE => 0,
-            virtio_gpu_drm::VIRTGPU_PARAM_CONTEXT_INIT => {
-                u64::from(virtio_gpu.has_context_init() && virtio_gpu.has_virgl_3d())
+            virtio_gpu_drm::VIRTGPU_PARAM_GUEST_VRAM => {
+                u64::from(!virtio_gpu.has_host_visible() && virtio_gpu.has_resource_blob())
             }
+            virtio_gpu_drm::VIRTGPU_PARAM_CROSS_DEVICE => {
+                u64::from(virtio_gpu.has_resource_assign_uuid())
+            }
+            virtio_gpu_drm::VIRTGPU_PARAM_CONTEXT_INIT => u64::from(virtio_gpu.has_context_init()),
             virtio_gpu_drm::VIRTGPU_PARAM_SUPPORTED_CAPSET_IDS => {
                 self.virtio_gpu_supported_capset_mask(&virtio_gpu)
             }
             virtio_gpu_drm::VIRTGPU_PARAM_EXPLICIT_DEBUG_NAME => {
-                u64::from(virtio_gpu.has_context_init() && virtio_gpu.has_virgl_3d())
+                u64::from(virtio_gpu.has_context_init())
             }
             _ => {
                 return_errno!(Errno::EINVAL);
@@ -1047,30 +1049,6 @@ impl DrmFile {
                 supported
             }
         })
-    }
-
-    fn read_user_cstring<const N: usize>(&self, ptr: u64) -> Result<([u8; N], usize)> {
-        if ptr == 0 {
-            return_errno!(Errno::EFAULT);
-        }
-
-        let mut out = [0u8; N];
-        let mut len = 0usize;
-        while len + 1 < N {
-            let byte: u8 = current_userspace!().read_val(ptr as usize + len)?;
-            if byte == 0 {
-                return Ok((out, len));
-            }
-            out[len] = byte;
-            len += 1;
-        }
-
-        let terminator: u8 = current_userspace!().read_val(ptr as usize + len)?;
-        if terminator != 0 {
-            return_errno!(Errno::EINVAL);
-        }
-
-        Ok((out, len))
     }
 
     fn ensure_virtio_gpu_context(&self, virtio_gpu: &Arc<VirtioGpuDevice>) -> Result<u32> {
@@ -3477,7 +3455,6 @@ impl FileIo for DrmFile {
             }
             cmd @ DrmIoctlVirtioGpuGetParam => {
                 let mut user_data = cmd.read()?;
-
                 let value = match self.virtio_gpu_param_value(user_data.param)? {
                     Some(value) => value,
                     None => {
@@ -3490,6 +3467,7 @@ impl FileIo for DrmFile {
                 }
                 current_userspace!().write_val(user_data.value as usize, &value)?;
                 cmd.write(&user_data)?;
+
                 Ok(0)
             }
             cmd @ DrmIoctlVirtioGpuResourceCreate => {
@@ -3634,7 +3612,10 @@ impl FileIo for DrmFile {
                 if (user_data.blob_flags & !virtio_gpu_drm::VIRTGPU_BLOB_FLAG_USE_MASK) != 0 {
                     return_errno!(Errno::EINVAL);
                 }
-                if (user_data.blob_flags & virtio_gpu_drm::VIRTGPU_BLOB_FLAG_USE_CROSS_DEVICE) != 0 {
+                if (user_data.blob_flags & virtio_gpu_drm::VIRTGPU_BLOB_FLAG_USE_CROSS_DEVICE)
+                    != 0
+                    && !virtio_gpu.has_resource_assign_uuid()
+                {
                     return_errno!(Errno::EINVAL);
                 }
 
@@ -3642,6 +3623,7 @@ impl FileIo for DrmFile {
                     virtio_gpu_drm::VIRTGPU_BLOB_MEM_GUEST => (true, false),
                     virtio_gpu_drm::VIRTGPU_BLOB_MEM_HOST3D => (false, true),
                     virtio_gpu_drm::VIRTGPU_BLOB_MEM_HOST3D_GUEST => (true, true),
+                    virtio_gpu_drm::VIRTGPU_BLOB_MEM_GUEST_VRAM => (true, false),
                     _ => return_errno!(Errno::EINVAL),
                 };
 
@@ -3653,10 +3635,6 @@ impl FileIo for DrmFile {
                         return_errno!(Errno::EINVAL);
                     }
                 } else if user_data.blob_id != 0 || user_data.cmd_size != 0 {
-                    return_errno!(Errno::EINVAL);
-                }
-
-                if !guest_blob {
                     return_errno!(Errno::EINVAL);
                 }
 
@@ -3678,11 +3656,16 @@ impl FileIo for DrmFile {
                 };
 
                 let backend = memfd_object_create("virtio-gpu-blob", user_data.size)?;
-                let sg = self.virtio_gpu_sg_from_backend(&backend)?;
+                // Linux allows HOST3D-only blobs; those are created without guest backing.
+                let sg = if guest_blob {
+                    Some(self.virtio_gpu_sg_from_backend(&backend)?)
+                } else {
+                    None
+                };
 
                 let gem_obj = virtio_gpu_blob_object_create(
                     user_data.size,
-                    Some(&sg),
+                    sg.as_ref(),
                     backend,
                     user_data.blob_mem,
                     user_data.blob_flags,
@@ -3773,9 +3756,24 @@ impl FileIo for DrmFile {
                                 return_errno!(Errno::EINVAL);
                             }
 
-                            let (debug_name, debug_name_len) =
-                                self.read_user_cstring::<VIRTGPU_DEBUG_NAME_MAX_LEN>(param.value)?;
-                            state.debug_name = debug_name;
+                            if param.value == 0 {
+                                return_errno!(Errno::EFAULT);
+                            }
+
+                            // Match Linux's strncpy_from_user(..., DEBUG_NAME_MAX_LEN - 1):
+                            // accept strings up to 64 bytes and do not require an explicit
+                            // trailing NUL from userspace.
+                            state.debug_name = [0; VIRTGPU_DEBUG_NAME_MAX_LEN];
+                            let mut debug_name_len = 0usize;
+                            while debug_name_len + 1 < VIRTGPU_DEBUG_NAME_MAX_LEN {
+                                let byte: u8 = current_userspace!()
+                                    .read_val(param.value as usize + debug_name_len)?;
+                                if byte == 0 {
+                                    break;
+                                }
+                                state.debug_name[debug_name_len] = byte;
+                                debug_name_len += 1;
+                            }
                             state.debug_name_len = debug_name_len;
                             state.explicit_debug_name = true;
                         }
