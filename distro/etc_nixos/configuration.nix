@@ -29,14 +29,17 @@
     hello-asterinas
     vim
     git
+    kmscube
+    mesa-demos
+    vulkan-tools
 
     # Uncomment the options below to use test-tools and games.
     # mesa-demos
-    # neverball
-    # superTuxKart
-    # openarena
-    # pipewire
-    # glmark2
+    neverball
+    superTuxKart
+    openarena
+    pipewire
+    glmark2
   ];
 
   system.nixos.distroName = "Asterinas NixOS";
