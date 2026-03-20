@@ -11,7 +11,7 @@ use aster_gpu::drm::{
         property::{PropertyEnum, PropertyKind},
     },
 };
-use hashbrown::HashMap;
+use hashbrown::{HashMap, hash_map::Entry};
 use alloc::{collections::{BTreeSet, VecDeque}, sync::Weak};
 use spin::Once;
 use ostd::mm::{VmIo, io_util::HasVmReaderWriter, HasPaddr, HasSize};
@@ -21,6 +21,7 @@ use crate::vm::vmo::{CommitFlags};
 use aster_virtio::device::gpu::drm::gem::{
     VirtioGpuObjectParams, VirtioGpuSgEntry, VirtioGpuSgTable, virtio_gpu_blob_object_create, virtio_gpu_mode_dumb_create_with_sg,
     virtio_gpu_blob_mem_by_gem, virtio_gpu_blob_state_by_gem, virtio_gpu_create_hdr_by_gem,
+    virtio_gpu_host_visible_mapping_by_gem,
     virtio_gpu_is_dumb_by_gem, virtio_gpu_obj_resource_id, virtio_gpu_object_create,
     virtio_gpu_object_unref,
 };
@@ -60,6 +61,7 @@ struct DrmSyncPoint {
     signaled_timestamp_ns: AtomicU64,
     wait_queue: WaitQueue,
     eventfd_listeners: Mutex<Vec<Arc<dyn FileLike>>>,
+    signal_dependents: Mutex<Vec<Arc<DrmSyncPoint>>>,
 }
 
 #[repr(C)]
@@ -107,6 +109,7 @@ impl DrmSyncPoint {
             }),
             wait_queue: WaitQueue::new(),
             eventfd_listeners: Mutex::new(Vec::new()),
+            signal_dependents: Mutex::new(Vec::new()),
         }
     }
 
@@ -127,6 +130,11 @@ impl DrmSyncPoint {
         let listeners = core::mem::take(&mut *self.eventfd_listeners.lock());
         for eventfd in listeners {
             signal_eventfd(&eventfd);
+        }
+
+        let dependents = core::mem::take(&mut *self.signal_dependents.lock());
+        for point in dependents {
+            point.signal();
         }
     }
 
@@ -151,6 +159,18 @@ impl DrmSyncPoint {
             for eventfd in listeners {
                 signal_eventfd(&eventfd);
             }
+        }
+    }
+
+    fn forward_signal_to(&self, point: Arc<DrmSyncPoint>) {
+        if self.is_signaled() {
+            point.signal();
+            return;
+        }
+
+        self.signal_dependents.lock().push(point.clone());
+        if self.is_signaled() {
+            point.signal();
         }
     }
 }
@@ -263,11 +283,29 @@ impl DrmSyncObj {
     }
 
     fn import_timeline_point(&self, point: u64, sync_point: Arc<DrmSyncPoint>) {
-        self.timeline.lock().insert(point, sync_point);
-        let listeners = self.timeline_available_listeners.lock().remove(&point);
-        if let Some(listeners) = listeners {
-            for eventfd in listeners {
-                signal_eventfd(&eventfd);
+        let inserted = {
+            let mut timeline = self.timeline.lock();
+            match timeline.entry(point) {
+                Entry::Occupied(existing) => {
+                    let existing = existing.get().clone();
+                    if !Arc::ptr_eq(&existing, &sync_point) {
+                        sync_point.forward_signal_to(existing);
+                    }
+                    false
+                }
+                Entry::Vacant(slot) => {
+                    slot.insert(sync_point);
+                    true
+                }
+            }
+        };
+
+        if inserted {
+            let listeners = self.timeline_available_listeners.lock().remove(&point);
+            if let Some(listeners) = listeners {
+                for eventfd in listeners {
+                    signal_eventfd(&eventfd);
+                }
             }
         }
     }
@@ -1149,7 +1187,7 @@ impl DrmFile {
                 if let Ok(resource_id) = virtio_gpu_obj_resource_id(&gem_obj) {
                     let mut state = self.virtio_gpu_context.lock();
                     if state.context_created && state.attached_resources.remove(&resource_id) {
-                        let _ = virtio_gpu.context_detach_resource(state.ctx_id, resource_id);
+                        let _ = virtio_gpu.context_detach_resource_async(state.ctx_id, resource_id);
                     }
                 }
             }
@@ -1225,10 +1263,11 @@ impl FileIo for DrmFile {
 
     fn mappable_with_offset(&self, offset: usize) -> Result<Mappable> {
         if let Some(gem_obj) = self.device.lookup_offset(&(offset as u64)) {
+            if let Ok(Some(iomem)) = virtio_gpu_host_visible_mapping_by_gem(&gem_obj) {
+                return Ok(Mappable::IoMem(iomem));
+            }
             if let Some(drm_memfd) = gem_obj.downcast_ref::<DrmMemfdFile>() {
                 return drm_memfd.mappable();
-            } else {
-                // TODO: hardware memory mmap
             }
         }
 
@@ -4037,7 +4076,7 @@ impl Drop for DrmFile {
 
         let state = self.virtio_gpu_context.lock();
         if state.context_created {
-            let _ = virtio_gpu.context_destroy(state.ctx_id);
+            let _ = virtio_gpu.context_destroy_async(state.ctx_id);
         }
     }
 }

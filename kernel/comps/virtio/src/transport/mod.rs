@@ -69,6 +69,11 @@ pub trait VirtioTransport: Sync + Send + Debug {
         false
     }
 
+    /// Returns the transport-provided shared memory region for the given id.
+    fn shm_region(&self, _id: u8) -> Option<IoMem> {
+        None
+    }
+
     // ====================Virtqueue related APIs====================
 
     /// Get the total number of queues
