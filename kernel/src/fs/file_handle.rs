@@ -168,4 +168,12 @@ pub enum Mappable {
     Inode(Arc<dyn Inode>),
     /// An MMIO region.
     IoMem(IoMem),
+    /// An inode object that should keep an owner alive for the mapping lifetime.
+    TrackedInode(Arc<dyn Inode>, Arc<dyn MappableOwner>),
+    /// An MMIO region that should keep an owner alive for the mapping lifetime.
+    TrackedIoMem(IoMem, Arc<dyn MappableOwner>),
 }
+
+pub trait MappableOwner: Debug + Send + Sync {}
+
+impl<T: Debug + Send + Sync> MappableOwner for T {}

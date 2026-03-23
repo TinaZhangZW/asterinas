@@ -23,7 +23,6 @@ use aster_virtio::device::gpu::drm::gem::{
     virtio_gpu_blob_mem_by_gem, virtio_gpu_blob_state_by_gem, virtio_gpu_create_hdr_by_gem,
     virtio_gpu_host_visible_mapping_by_gem,
     virtio_gpu_is_dumb_by_gem, virtio_gpu_obj_resource_id, virtio_gpu_object_create,
-    virtio_gpu_object_unref,
 };
 
 use crate::{
@@ -1174,27 +1173,15 @@ impl DrmFile {
     }
 
     fn close_gem_handle(&self, handle: u32) -> Result<()> {
-        let driver = self.device.driver();
-        let driver_name = driver.name();
-
         let Some(gem_obj) = self.remove_gem(&handle) else {
             return_errno!(Errno::ENOENT);
         };
 
-        // Keep virtio resource lifetime in sync with GEM handle lifetime.
-        if driver_name == "virtio_gpu" {
-            if let Some(virtio_gpu) = self.virtio_gpu_device() {
-                if let Ok(resource_id) = virtio_gpu_obj_resource_id(&gem_obj) {
-                    let mut state = self.virtio_gpu_context.lock();
-                    if state.context_created && state.attached_resources.remove(&resource_id) {
-                        let _ = virtio_gpu.context_detach_resource_async(state.ctx_id, resource_id);
-                    }
-                }
-            }
-            let _ = virtio_gpu_object_unref(&gem_obj);
-        }
-
-        let _ = gem_obj.release();
+        // GEM handle close must only drop this file's handle-table reference.
+        // Userspace may still keep the object alive through an mmap or another
+        // DRM object (for example a framebuffer). Releasing the backend here can
+        // destroy the shmem/virtio resource while those references are still in
+        // use, which leads to invalid teardown and VM panics.
         self.device.remove_offset(&gem_obj);
         Ok(())
     }
@@ -1264,10 +1251,15 @@ impl FileIo for DrmFile {
     fn mappable_with_offset(&self, offset: usize) -> Result<Mappable> {
         if let Some(gem_obj) = self.device.lookup_offset(&(offset as u64)) {
             if let Ok(Some(iomem)) = virtio_gpu_host_visible_mapping_by_gem(&gem_obj) {
-                return Ok(Mappable::IoMem(iomem));
+                return Ok(Mappable::TrackedIoMem(iomem, gem_obj));
             }
             if let Some(drm_memfd) = gem_obj.downcast_ref::<DrmMemfdFile>() {
-                return drm_memfd.mappable();
+                return match drm_memfd.mappable()? {
+                    Mappable::Inode(inode) => Ok(Mappable::TrackedInode(inode, gem_obj)),
+                    Mappable::IoMem(iomem) => Ok(Mappable::TrackedIoMem(iomem, gem_obj)),
+                    Mappable::TrackedInode(inode, owner) => Ok(Mappable::TrackedInode(inode, owner)),
+                    Mappable::TrackedIoMem(iomem, owner) => Ok(Mappable::TrackedIoMem(iomem, owner)),
+                };
             }
         }
 

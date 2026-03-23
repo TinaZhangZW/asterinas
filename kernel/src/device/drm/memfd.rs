@@ -53,7 +53,7 @@ impl DrmGemBackend for DrmMemfdFile {
     }
 
     fn release(&self) -> Result<(), DrmError> {
-        self.0.resize(0).map_err(|_| DrmError::Invalid)
+        Ok(())
     }
 }
 

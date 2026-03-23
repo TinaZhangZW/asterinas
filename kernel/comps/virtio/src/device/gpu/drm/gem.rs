@@ -1,8 +1,7 @@
 use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
 use alloc::vec;
 
-use aster_gpu::{GpuDevice, drm::{DrmError, gem::DrmGemObject, ioctl::DrmModeCreateDumb}};
-use aster_gpu::drm::gem::DrmGemBackend;
+use aster_gpu::{GpuDevice, drm::{DrmError, gem::{DrmGemBackend, DrmGemObject, DrmGemObjectCleanup}, ioctl::DrmModeCreateDumb}};
 use ostd::io::IoMem;
 use crate::device::gpu::{
     VirtioGpuCtrlHdr,
@@ -24,7 +23,6 @@ struct HostVisibleBlobMapping {
 }
 
 pub struct VirtioGpuObject {
-    gem_object: Arc<DrmGemObject>,
     hw_res_handle: u32,
     width: u32,
     height: u32,
@@ -77,7 +75,6 @@ pub struct VirtioGpuSgTable {
 
 impl VirtioGpuObject {
     fn new(
-        gem_object: Arc<DrmGemObject>,
         hw_res_handle: u32,
         width: u32,
         height: u32,
@@ -86,7 +83,6 @@ impl VirtioGpuObject {
         attach_hdr: VirtioGpuCtrlHdr,
     ) -> Self {
         Self {
-            gem_object,
             hw_res_handle,
             width,
             height,
@@ -117,6 +113,19 @@ fn object_key(gem: &Arc<DrmGemObject>) -> usize {
     Arc::as_ptr(gem) as usize
 }
 
+fn object_key_ref(gem: &DrmGemObject) -> usize {
+    gem as *const DrmGemObject as usize
+}
+
+#[derive(Debug)]
+struct VirtioGpuGemCleanup;
+
+impl DrmGemObjectCleanup for VirtioGpuGemCleanup {
+    fn cleanup(&self, gem: &DrmGemObject) -> Result<(), DrmError> {
+        virtio_gpu_object_unref_by_key(object_key_ref(gem))
+    }
+}
+
 fn objects_map() -> &'static SpinLock<BTreeMap<usize, VirtioGpuObject>> {
     VIRTIO_GPU_OBJECTS.call_once(|| SpinLock::new(BTreeMap::new()))
 }
@@ -135,7 +144,10 @@ pub fn virtio_gpu_obj_resource_id(
 }
 
 pub fn virtio_gpu_object_unref(gem_object: &Arc<DrmGemObject>) -> Result<(), DrmError> {
-    let key = object_key(gem_object);
+    virtio_gpu_object_unref_by_key(object_key(gem_object))
+}
+
+fn virtio_gpu_object_unref_by_key(key: usize) -> Result<(), DrmError> {
     let (hw_res, host_visible_offset) = {
         let mut objs = objects_map().lock();
         let obj = objs.remove(&key).ok_or(DrmError::Invalid)?;
@@ -215,7 +227,12 @@ pub fn virtio_gpu_object_create_with_backend(
     backend: Arc<dyn DrmGemBackend>,
     params: &VirtioGpuObjectParams,
 ) -> Result<Arc<DrmGemObject>, DrmError> {
-    let gem_object = Arc::new(DrmGemObject::new(size, pitch, backend));
+    let gem_object = Arc::new(DrmGemObject::with_cleanup(
+        size,
+        pitch,
+        backend,
+        Some(Arc::new(VirtioGpuGemCleanup)),
+    ));
 
     let create_res = with_vgpu(|vgpu| {
         let resource_id = vgpu.alloc_resource_id();
@@ -300,7 +317,6 @@ pub fn virtio_gpu_object_create_with_backend(
     })?;
 
     let mut virtio_gpu_obj = VirtioGpuObject::new(
-        gem_object.clone(),
         create_res.resource_id,
         width,
         height,
