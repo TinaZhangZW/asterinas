@@ -54,6 +54,16 @@ impl DrmGemObject {
         }
     }
 
+    /// Size of the buffer, in bytes.
+    pub fn size(&self) -> u64 {
+        self.size
+    }
+
+    /// Pitch (bytes per line) as provided when the object was created.
+    pub fn pitch(&self) -> u32 {
+        self.pitch
+    }
+
     pub fn release(&self) -> Result<(), DrmError> {
         self.backend.release()
     }
