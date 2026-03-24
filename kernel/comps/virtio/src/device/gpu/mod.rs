@@ -33,8 +33,11 @@ pub(super) const CMD_GET_CAPSET_INFO: u32 = 0x0108;
 pub(super) const CMD_GET_CAPSET: u32 = 0x0109;
 pub(super) const CMD_GET_EDID: u32 = 0x010a;
 pub(super) const CMD_RESOURCE_CREATE_BLOB: u32 = 0x010c;
+pub(super) const CMD_SET_SCANOUT_BLOB: u32 = 0x010d;
 pub(super) const CMD_CTX_CREATE: u32 = 0x0200;
 pub(super) const CMD_CTX_DESTROY: u32 = 0x0201;
+pub(super) const CMD_CTX_ATTACH_RESOURCE: u32 = 0x0202;
+pub(super) const CMD_CTX_DETACH_RESOURCE: u32 = 0x0203;
 pub(super) const CMD_RESOURCE_CREATE_3D: u32 = 0x0204;
 pub(super) const CMD_TRANSFER_TO_HOST_3D: u32 = 0x0205;
 pub(super) const CMD_TRANSFER_FROM_HOST_3D: u32 = 0x0206;
@@ -328,11 +331,34 @@ pub struct VirtioGpuCtxDestroy {
 
 #[derive(Debug, Clone, Copy, Default, Pod)]
 #[repr(C)]
+pub struct VirtioGpuCtxResource {
+    pub hdr: VirtioGpuCtrlHdr,
+    pub resource_id: u32,
+    pub padding: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default, Pod)]
+#[repr(C)]
 pub struct VirtioGpuSetScanout {
     pub hdr: VirtioGpuCtrlHdr,
     pub rect: VirtioGpuRect,
     pub scanout_id: u32,
     pub resource_id: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default, Pod)]
+#[repr(C)]
+pub struct VirtioGpuSetScanoutBlob {
+    pub hdr: VirtioGpuCtrlHdr,
+    pub rect: VirtioGpuRect,
+    pub scanout_id: u32,
+    pub resource_id: u32,
+    pub width: u32,
+    pub height: u32,
+    pub format: u32,
+    pub padding: u32,
+    pub strides: [u32; 4],
+    pub offsets: [u32; 4],
 }
 
 #[derive(Debug, Clone, Copy, Default, Pod)]

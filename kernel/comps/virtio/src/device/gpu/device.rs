@@ -14,21 +14,21 @@ use ostd::{
     sync::SpinLock,
 };
 use ostd::prelude::println;
-use super::{CMD_CTX_CREATE, CMD_CTX_DESTROY, CMD_GET_CAPSET, CMD_GET_CAPSET_INFO,
+use super::{CMD_CTX_ATTACH_RESOURCE, CMD_CTX_CREATE, CMD_CTX_DESTROY, CMD_CTX_DETACH_RESOURCE, CMD_GET_CAPSET, CMD_GET_CAPSET_INFO,
     CMD_GET_DISPLAY_INFO, CMD_GET_EDID, CMD_RESOURCE_ATTACH_BACKING,
     CMD_RESOURCE_CREATE_2D, CMD_RESOURCE_CREATE_3D, CMD_RESOURCE_CREATE_BLOB, CMD_RESOURCE_UNREF,
     CMD_RESOURCE_DETACH_BACKING, CMD_RESOURCE_FLUSH, CMD_TRANSFER_FROM_HOST_3D,
-    CMD_TRANSFER_TO_HOST_2D, CMD_TRANSFER_TO_HOST_3D, CMD_SET_SCANOUT, CMD_SUBMIT_3D,
+    CMD_TRANSFER_TO_HOST_2D, CMD_TRANSFER_TO_HOST_3D, CMD_SET_SCANOUT, CMD_SET_SCANOUT_BLOB, CMD_SUBMIT_3D,
     DEVICE_NAME, GpuFeatures, QUEUE_CONTROL,
     QUEUE_CURSOR, RESP_OK_CAPSET, RESP_OK_CAPSET_INFO, RESP_OK_DISPLAY_INFO, RESP_OK_EDID, RESP_OK_NODATA,
     VirtioGpuConfig, VirtioGpuCtrlHdr, VirtioGpuDisplayOne, VirtioGpuFormat, VirtioGpuGetCapset, VirtioGpuGetCapsetInfo,
-    VirtioGpuCtxCreate, VirtioGpuCtxDestroy, VirtioGpuGetEdid, VirtioGpuMemEntry, VirtioGpuRect, VirtioGpuResourceAttachBacking,
+    VirtioGpuCtxCreate, VirtioGpuCtxDestroy, VirtioGpuCtxResource, VirtioGpuGetEdid, VirtioGpuMemEntry, VirtioGpuRect, VirtioGpuResourceAttachBacking,
     VirtioGpuResourceUnref, VirtioGpuResourceDetachBacking,
     VirtioGpuResourceCreate2d, VirtioGpuResourceCreate3d, VirtioGpuResourceCreateBlob, VirtioGpuRespCapsetInfo, VirtioGpuRespDisplayInfo,
-    VirtioGpuRespEdid, VirtioGpuResourceFlush, VirtioGpuTransferHost3d, VirtioGpuTransferToHost2d, VirtioGpuSetScanout, VirtioGpuCmdSubmit,
+    VirtioGpuRespEdid, VirtioGpuResourceFlush, VirtioGpuTransferHost3d, VirtioGpuTransferToHost2d, VirtioGpuSetScanout, VirtioGpuSetScanoutBlob, VirtioGpuCmdSubmit,
 };
 use crate::{
-    device::{VirtioDeviceError, gpu::drm::VirtioGpuDrmDrvier},
+    device::{VirtioDeviceError, gpu::{self, drm::VirtioGpuDrmDrvier}},
     id_alloc::SyncIdAlloc,
     queue::{QueueError, VirtQueue},
     transport::{ConfigManager, VirtioTransport},
@@ -73,6 +73,9 @@ const CTRL_REQ_STRIDE: usize = {
     if size_of::<VirtioGpuSetScanout>() > max {
         max = size_of::<VirtioGpuSetScanout>();
     }
+    if size_of::<VirtioGpuSetScanoutBlob>() > max {
+        max = size_of::<VirtioGpuSetScanoutBlob>();
+    }
     if size_of::<VirtioGpuCmdSubmit>() > max {
         max = size_of::<VirtioGpuCmdSubmit>();
     }
@@ -81,6 +84,9 @@ const CTRL_REQ_STRIDE: usize = {
     }
     if size_of::<VirtioGpuCtxDestroy>() > max {
         max = size_of::<VirtioGpuCtxDestroy>();
+    }
+    if size_of::<VirtioGpuCtxResource>() > max {
+        max = size_of::<VirtioGpuCtxResource>();
     }
     max
 };
@@ -155,8 +161,15 @@ impl VirtioGpuDevice {
         assert!(CTRL_RESP_STRIDE * CTRL_QUEUE_SIZE as usize <= ctrl_responses.size());
 
         let device_features = transport.read_device_features();
-        let gpu_features = GpuFeatures::from_bits_truncate(device_features);
+        // Device-specific virtio feature bits live in 0..23 and 50..63.
+        // Mirror global negotiation so capability flags are based on the
+        // subset we actually accept, not the full offered feature set.
+        let device_feature_mask = ((1u64 << 24) - 1) | (((1u64 << 24) - 1) << 50);
+        let negotiated_gpu_features =
+            Self::negotiate_features(device_features & device_feature_mask);
+        let gpu_features = GpuFeatures::from_bits_truncate(negotiated_gpu_features);
         let mut caps = VirtioGpuCaps::empty();
+
         if cfg!(target_endian = "little") && gpu_features.contains(GpuFeatures::VIRGL) {
             caps.insert(VirtioGpuCaps::VIRGL_3D);
         }
@@ -419,6 +432,46 @@ impl VirtioGpuDevice {
 
         let _: VirtioGpuCtrlHdr =
             self.submit_control_command::<VirtioGpuCtxDestroy, VirtioGpuCtrlHdr>(&req, RESP_OK_NODATA)?;
+        Ok(())
+    }
+
+    pub fn context_attach_resource(
+        &self,
+        context_id: u32,
+        resource_id: u32,
+    ) -> Result<(), VirtioGpuCommandError> {
+        let req = VirtioGpuCtxResource {
+            hdr: VirtioGpuCtrlHdr {
+                type_: CMD_CTX_ATTACH_RESOURCE,
+                ctx_id: context_id,
+                ..Default::default()
+            },
+            resource_id,
+            padding: 0,
+        };
+
+        let _: VirtioGpuCtrlHdr =
+            self.submit_control_command::<VirtioGpuCtxResource, VirtioGpuCtrlHdr>(&req, RESP_OK_NODATA)?;
+        Ok(())
+    }
+
+    pub fn context_detach_resource(
+        &self,
+        context_id: u32,
+        resource_id: u32,
+    ) -> Result<(), VirtioGpuCommandError> {
+        let req = VirtioGpuCtxResource {
+            hdr: VirtioGpuCtrlHdr {
+                type_: CMD_CTX_DETACH_RESOURCE,
+                ctx_id: context_id,
+                ..Default::default()
+            },
+            resource_id,
+            padding: 0,
+        };
+
+        let _: VirtioGpuCtrlHdr =
+            self.submit_control_command::<VirtioGpuCtxResource, VirtioGpuCtrlHdr>(&req, RESP_OK_NODATA)?;
         Ok(())
     }
 
@@ -960,6 +1013,41 @@ impl VirtioGpuDevice {
         };
         let _: VirtioGpuCtrlHdr =
             self.submit_control_command::<VirtioGpuSetScanout, VirtioGpuCtrlHdr>(
+                &req,
+                RESP_OK_NODATA,
+            )?;
+        Ok(())
+    }
+
+    pub fn set_scanout_blob(
+        &self,
+        scanout_id: u32,
+        resource_id: u32,
+        rect: VirtioGpuRect,
+        width: u32,
+        height: u32,
+        format: u32,
+        strides: [u32; 4],
+        offsets: [u32; 4],
+    ) -> Result<(), VirtioGpuCommandError> {
+        let req = VirtioGpuSetScanoutBlob {
+            hdr: VirtioGpuCtrlHdr {
+                type_: CMD_SET_SCANOUT_BLOB,
+                ..Default::default()
+            },
+            rect,
+            scanout_id,
+            resource_id,
+            width,
+            height,
+            format,
+            padding: 0,
+            strides,
+            offsets,
+        };
+
+        let _: VirtioGpuCtrlHdr =
+            self.submit_control_command::<VirtioGpuSetScanoutBlob, VirtioGpuCtrlHdr>(
                 &req,
                 RESP_OK_NODATA,
             )?;

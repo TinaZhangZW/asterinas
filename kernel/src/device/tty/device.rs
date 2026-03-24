@@ -10,7 +10,7 @@ use aster_cmdline::KCMDLINE;
 use device_id::{DeviceId, MajorId, MinorId};
 use spin::Once;
 
-use super::n_tty::tty1_device;
+use super::n_tty::active_vt_device;
 use crate::{
     device::{
         registry::char,
@@ -33,8 +33,7 @@ pub struct Tty0Device;
 
 impl Tty0Device {
     fn active_vt(&self) -> &Arc<Tty<VtDriver>> {
-        // Currently there is only one virtual terminal `tty1`.
-        tty1_device()
+        active_vt_device()
     }
 }
 

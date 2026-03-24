@@ -9,12 +9,41 @@ use aster_virtio::device::gpu::drm::{
     VirtioGpuWait,
 };
 
-use crate::util::ioctl::{InData, InOutData, NoData, ioc};
+use crate::util::ioctl::{InData, InOutData, OutData, NoData, ioc};
+use ostd::Pod;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod)]
+pub(super) struct DrmAuth {
+    pub magic: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod)]
+pub(super) struct DrmUnique {
+    pub unique_len: i32,
+    pub unique: u64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod)]
+pub(super) struct DrmSetVersion {
+    pub drm_di_major: i32,
+    pub drm_di_minor: i32,
+    pub drm_dd_major: i32,
+    pub drm_dd_minor: i32,
+}
 
 pub(super) type DrmIoctlVersion                 = ioc!(DRM_IOCTL_VERSION,                   b'd', 0x00, InOutData<DrmVersion>);
+pub(super) type DrmIoctlGetUnique               = ioc!(DRM_IOCTL_GET_UNIQUE,                b'd', 0x01, InOutData<DrmUnique>);
+pub(super) type DrmIoctlGetMagic                = ioc!(DRM_IOCTL_GET_MAGIC,                 b'd', 0x02, OutData<DrmAuth>);
+pub(super) type DrmIoctlSetVersion              = ioc!(DRM_IOCTL_SET_VERSION,               b'd', 0x07, InOutData<DrmSetVersion>);
+pub(super) type DrmIoctlAuthMagic               = ioc!(DRM_IOCTL_AUTH_MAGIC,                b'd', 0x11, InData<DrmAuth>);
 pub(super) type DrmIoctlGetCap                  = ioc!(DRM_IOCTL_GET_CAP,                   b'd', 0x0c, InOutData<DrmGetCap>);
 pub(super) type DrmIoctlSetClientCap            = ioc!(DRM_IOCTL_SET_CLIENT_CAP,            b'd', 0x0d, InData<DrmSetClientCap>);
 pub(super) type DrmIoctlGemClose               = ioc!(DRM_IOCTL_GEM_CLOSE,                 b'd', 0x09, InData<DrmGemClose>);
+pub(super) type DrmIoctlPrimeHandleToFd        = ioc!(DRM_IOCTL_PRIME_HANDLE_TO_FD,        b'd', 0x2d, InOutData<DrmPrimeHandle>);
+pub(super) type DrmIoctlPrimeFdToHandle        = ioc!(DRM_IOCTL_PRIME_FD_TO_HANDLE,        b'd', 0x2e, InOutData<DrmPrimeHandle>);
 pub(super) type DrmIoctlSetMaster               = ioc!(DRM_IOCTL_SET_MASTER,                b'd', 0x1e, NoData);
 pub(super) type DrmIoctlDropMaster              = ioc!(DRM_IOCTL_DROP_MASTER,               b'd', 0x1f, NoData);
 pub(super) type DrmIoctlModeGetResources        = ioc!(DRM_IOCTL_MODE_GETRESOURCES,         b'd', 0xa0, InOutData<DrmModeGetResources>);
@@ -28,7 +57,9 @@ pub(super) type DrmIoctlModeGetProperty         = ioc!(DRM_IOCTL_MODE_GETPROPERT
 pub(super) type DrmIoctlModeSetProperty         = ioc!(DRM_IOCTL_MODE_SETPROPERTY,          b'd', 0xab, InOutData<DrmModeConnectorSetProperty>);
 pub(super) type DrmIoctlModeGetPropBlob         = ioc!(DRM_IOCTL_MODE_GETPROPBLOB,          b'd', 0xac, InOutData<DrmModeGetBlob>);
 pub(super) type DrmIoctlModeAddFB               = ioc!(DRM_IOCTL_MODE_ADDFB,                b'd', 0xae, InOutData<DrmModeFBCmd>);
+pub(super) type DrmIoctlModeAddFB2              = ioc!(DRM_IOCTL_MODE_ADDFB2,               b'd', 0xb8, InOutData<DrmModeFbCmd2>);
 pub(super) type DrmIoctlModeRmFB                = ioc!(DRM_IOCTL_MODE_RMFB,                 b'd', 0xaf, InData<DrmModeFBCmd>);
+pub(super) type DrmIoctlModePageFlip            = ioc!(DRM_IOCTL_MODE_PAGE_FLIP,            b'd', 0xb0, InOutData<DrmModeCrtcPageFlip>);
 pub(super) type DrmIoctlModeDirtyFb             = ioc!(DRM_IOCTL_MODE_DIRTYFB,              b'd', 0xb1, InOutData<DrmModeFbDirtyCmd>);
 pub(super) type DrmIoctlModeCreateDumb          = ioc!(DRM_IOCTL_MODE_CREATE_DUMB,          b'd', 0xb2, InOutData<DrmModeCreateDumb>);
 pub(super) type DrmIoctlModeMapDumb             = ioc!(DRM_IOCTL_MODE_MAP_DUMB,             b'd', 0xb3, InOutData<DrmModeMapDumb>);
@@ -45,6 +76,9 @@ pub(super) type DrmIoctlModeDestroyDumb         =
 pub(super) type DrmIoctlModeGetPlaneResources   = ioc!(DRM_IOCTL_MODE_GETPLANERESOURCES,    b'd', 0xb5, InOutData<DrmModeGetPlaneRes>);
 pub(super) type DrmIoctlModeGetPlane            = ioc!(DRM_IOCTL_MODE_GETPLANE,             b'd', 0xb6, InOutData<DrmModeGetPlane>);
 pub(super) type DrmIoctlModeObjectGetProps      = ioc!(DRM_IOCTL_MODE_OBJ_GETPROPERTIES,    b'd', 0xb9, InOutData<DrmModeObjectGetProps>);
+pub(super) type DrmIoctlModeAtomic              = ioc!(DRM_IOCTL_MODE_ATOMIC,               b'd', 0xbc, InOutData<DrmModeAtomic>);
+pub(super) type DrmIoctlModeCreatePropBlob      = ioc!(DRM_IOCTL_MODE_CREATEPROPBLOB,       b'd', 0xbd, InOutData<DrmModeCreateBlob>);
+pub(super) type DrmIoctlModeDestroyPropBlob     = ioc!(DRM_IOCTL_MODE_DESTROYPROPBLOB,      b'd', 0xbe, InOutData<DrmModeDestroyBlob>);
 pub(super) type DrmIoctlModeCursor2             = ioc!(DRM_IOCTL_MODE_CURSOR2,              b'd', 0xbb, InOutData<DrmModeCursor>);
 pub(super) type DrmIoctlVirtioGpuGetParam       = ioc!(DRM_IOCTL_VIRTGPU_GETPARAM,          b'd', 0x43, InOutData<VirtioGpuGetParam>);
 pub(super) type DrmIoctlVirtioGpuExecbuffer     = ioc!(DRM_IOCTL_VIRTGPU_EXECBUFFER,        b'd', 0x42, InOutData<VirtioGpuExecbuffer>);
@@ -58,14 +92,14 @@ pub(super) type DrmIoctlVirtioGpuContextInit    = ioc!(DRM_IOCTL_VIRTGPU_CONTEXT
 pub(super) type DrmIoctlVirtioGpuMap            = ioc!(DRM_IOCTL_VIRTGPU_MAP,               b'd', 0x41, InOutData<VirtioGpuMap>);
 pub(super) type DrmIoctlVirtioGpuResourceInfo   = ioc!(DRM_IOCTL_VIRTGPU_RESOURCE_INFO,    b'd', 0x45, InOutData<VirtioGpuResourceInfo>);
 pub(super) type DrmIoctlSyncobjCreate           = ioc!(DRM_IOCTL_SYNCOBJ_CREATE,            b'd', 0xbf, InOutData<DrmSyncobjCreate>);
-pub(super) type DrmIoctlSyncobjDestroy          = ioc!(DRM_IOCTL_SYNCOBJ_DESTROY,           b'd', 0xc0, InData<DrmSyncobjDestroy>);
+pub(super) type DrmIoctlSyncobjDestroy          = ioc!(DRM_IOCTL_SYNCOBJ_DESTROY,           b'd', 0xc0, InOutData<DrmSyncobjDestroy>);
 pub(super) type DrmIoctlSyncobjHandleToFd       = ioc!(DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD,      b'd', 0xc1, InOutData<DrmSyncobjHandle>);
 pub(super) type DrmIoctlSyncobjFdToHandle       = ioc!(DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE,      b'd', 0xc2, InOutData<DrmSyncobjHandle>);
 pub(super) type DrmIoctlSyncobjWait             = ioc!(DRM_IOCTL_SYNCOBJ_WAIT,              b'd', 0xc3, InOutData<DrmSyncobjWait>);
-pub(super) type DrmIoctlSyncobjReset            = ioc!(DRM_IOCTL_SYNCOBJ_RESET,             b'd', 0xc4, InData<DrmSyncobjArray>);
-pub(super) type DrmIoctlSyncobjSignal           = ioc!(DRM_IOCTL_SYNCOBJ_SIGNAL,            b'd', 0xc5, InData<DrmSyncobjArray>);
+pub(super) type DrmIoctlSyncobjReset            = ioc!(DRM_IOCTL_SYNCOBJ_RESET,             b'd', 0xc4, InOutData<DrmSyncobjArray>);
+pub(super) type DrmIoctlSyncobjSignal           = ioc!(DRM_IOCTL_SYNCOBJ_SIGNAL,            b'd', 0xc5, InOutData<DrmSyncobjArray>);
 pub(super) type DrmIoctlSyncobjTimelineWait     = ioc!(DRM_IOCTL_SYNCOBJ_TIMELINE_WAIT,     b'd', 0xca, InOutData<DrmSyncobjTimelineWait>);
-pub(super) type DrmIoctlSyncobjQuery            = ioc!(DRM_IOCTL_SYNCOBJ_QUERY,             b'd', 0xcb, InData<DrmSyncobjTimelineArray>);
-pub(super) type DrmIoctlSyncobjTransfer         = ioc!(DRM_IOCTL_SYNCOBJ_TRANSFER,          b'd', 0xcc, InData<DrmSyncobjTransfer>);
-pub(super) type DrmIoctlSyncobjTimelineSignal   = ioc!(DRM_IOCTL_SYNCOBJ_TIMELINE_SIGNAL,   b'd', 0xcd, InData<DrmSyncobjTimelineArray>);
-pub(super) type DrmIoctlSyncobjEventfd          = ioc!(DRM_IOCTL_SYNCOBJ_EVENTFD,           b'd', 0xcf, InData<DrmSyncobjEventfd>);
+pub(super) type DrmIoctlSyncobjQuery            = ioc!(DRM_IOCTL_SYNCOBJ_QUERY,             b'd', 0xcb, InOutData<DrmSyncobjTimelineArray>);
+pub(super) type DrmIoctlSyncobjTransfer         = ioc!(DRM_IOCTL_SYNCOBJ_TRANSFER,          b'd', 0xcc, InOutData<DrmSyncobjTransfer>);
+pub(super) type DrmIoctlSyncobjTimelineSignal   = ioc!(DRM_IOCTL_SYNCOBJ_TIMELINE_SIGNAL,   b'd', 0xcd, InOutData<DrmSyncobjTimelineArray>);
+pub(super) type DrmIoctlSyncobjEventfd          = ioc!(DRM_IOCTL_SYNCOBJ_EVENTFD,           b'd', 0xcf, InOutData<DrmSyncobjEventfd>);

@@ -403,6 +403,24 @@ impl<D: TtyDriver> Tty<D> {
                 let mode = console.keyboard_mode().unwrap_or(KeyboardMode::Xlate);
                 cmd.write(&(mode as i32))?;
             }
+            cmd @ VtActivate => {
+                let vt = cmd.get();
+                if vt == 0 {
+                    return_errno_with_message!(Errno::EINVAL, "the target VT must be non-zero");
+                }
+
+                n_tty::activate_vt(vt)?;
+            }
+            cmd @ VtWaitActive => {
+                let vt = cmd.get();
+                if vt == 0 {
+                    return_errno_with_message!(Errno::EINVAL, "the target VT must be non-zero");
+                }
+
+                if n_tty::active_vt_index() != vt {
+                    return_errno_with_message!(Errno::EAGAIN, "the target VT is not active yet");
+                }
+            }
 
             _ => (self.weak_self.upgrade().unwrap() as Arc<dyn Terminal>)
                 .job_ioctl(raw_ioctl, false)?,

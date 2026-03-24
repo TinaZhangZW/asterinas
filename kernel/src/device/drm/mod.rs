@@ -2,6 +2,7 @@ mod file;
 mod ioctl_defs;
 mod memfd;
 mod minor;
+mod sysfs;
 
 use aster_gpu::drm::{device::DrmDevice, driver::DrmDriverFeatures};
 
@@ -53,15 +54,18 @@ pub(super) fn init_in_first_kthread() -> Result<()> {
 fn drm_dev_register(device: Arc<DrmDevice>) -> Result<()> {
     if device.check_feature(DrmDriverFeatures::COMPUTE_ACCEL) {
         let drm_minor = DrmMinor::new(device.clone(), DrmMinorType::Accel);
-        char::register(drm_minor)?;
+        char::register(drm_minor.clone())?;
+        sysfs::register_minor(&drm_minor)?;
     } else {
         if device.check_feature(DrmDriverFeatures::RENDER) {
             let drm_minor = DrmMinor::new(device.clone(), DrmMinorType::Render);
-            char::register(drm_minor)?;
+            char::register(drm_minor.clone())?;
+            sysfs::register_minor(&drm_minor)?;
         }
 
         let drm_minor = DrmMinor::new(device.clone(), DrmMinorType::Primary);
-        char::register(drm_minor)?;
+        char::register(drm_minor.clone())?;
+        sysfs::register_minor(&drm_minor)?;
     }
 
     Ok(())

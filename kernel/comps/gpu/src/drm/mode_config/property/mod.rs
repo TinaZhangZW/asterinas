@@ -50,7 +50,7 @@ pub enum PropertyKind {
     SignedRange { min: i64, max: i64 },
     Enum(Vec<(u64, String)>),
     Bitmask(Vec<(u64, String)>),
-    Blob(u32),
+    Blob,
     Object(DrmModeObjectType),
 }
 
@@ -81,11 +81,14 @@ impl DrmProperty {
     }
 
     pub fn create(name: &str, flags: PropertyFlags) -> Self {
-        let name = str_to_u8_32(name);
+        Self::create_blob(name, flags)
+    }
+
+    pub fn create_blob(name: &str, flags: PropertyFlags) -> Self {
         Self {
-            name,
-            flags,
-            kind: PropertyKind::Blob(1), // TODO: use tree blob id
+            name: str_to_u8_32(name),
+            flags: flags | PropertyFlags::BLOB,
+            kind: PropertyKind::Blob,
         }
     }
 
@@ -109,13 +112,36 @@ impl DrmProperty {
         }
     }
 
+    pub fn create_signed_range(name: &str, flags: PropertyFlags, min: i64, max: i64) -> Self {
+        Self {
+            name: str_to_u8_32(name),
+            flags,
+            kind: PropertyKind::SignedRange { min, max },
+        }
+    }
+
+    pub fn create_object(name: &str, flags: PropertyFlags, obj_type: DrmModeObjectType) -> Self {
+        Self {
+            name: str_to_u8_32(name),
+            flags,
+            kind: PropertyKind::Object(obj_type),
+        }
+    }
+
+    pub fn has_name(&self, name: &str) -> bool {
+        let bytes = name.as_bytes();
+        let len = bytes.len().min(DRM_PROP_NAME_LEN);
+        self.name[..len] == bytes[..len]
+            && (len == DRM_PROP_NAME_LEN || self.name[len] == 0)
+    }
+
     pub fn count_values(&self) -> u32 {
         match &self.kind {
             PropertyKind::Range { .. } => 2,
             PropertyKind::SignedRange { .. } => 2,
             PropertyKind::Enum(entries) => entries.len() as u32,
             PropertyKind::Bitmask(entries) => entries.len() as u32,
-            PropertyKind::Blob { .. } => 1,
+            PropertyKind::Blob => 0,
             PropertyKind::Object { .. } => 1,
         }
     }
@@ -124,7 +150,8 @@ impl DrmProperty {
         match &self.kind {
             PropertyKind::Enum(entries) => entries.len() as u32,
             PropertyKind::Bitmask(entries) => entries.len() as u32,
-            PropertyKind::Blob { .. } => 1, // TODO: where to get true blob num?
+            // Linux GETPROPERTY reports no enum/blob entries for BLOB properties.
+            PropertyKind::Blob => 0,
             _ => 0,
         }
     }

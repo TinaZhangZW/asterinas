@@ -96,6 +96,32 @@ impl DrmMinor {
     pub fn remove_offset(&self, gem_obj: &Arc<DrmGemObject>) {
         self.device.remove_offset(gem_obj);
     }
+
+    pub(super) fn index(&self) -> u32 {
+        self.index
+    }
+
+    pub(super) fn type_(&self) -> DrmMinorType {
+        self.type_
+    }
+
+    pub(super) fn major_minor(&self) -> (u16, u32) {
+        let mut minor_id = self.index;
+        if matches!(self.type_, DrmMinorType::Render) {
+            minor_id += RENDER_MINOR_BASE;
+        }
+
+        (DRM_MAJOR_ID, minor_id)
+    }
+
+    pub(super) fn node_basename(&self) -> String {
+        match self.type_ {
+            DrmMinorType::Primary => format!("card{}", self.index),
+            DrmMinorType::Render => format!("renderD{}", RENDER_MINOR_BASE + self.index),
+            DrmMinorType::Control => format!("controlD{}", self.index),
+            DrmMinorType::Accel => format!("accel{}", self.index),
+        }
+    }
 }
 
 impl Device for DrmMinor {

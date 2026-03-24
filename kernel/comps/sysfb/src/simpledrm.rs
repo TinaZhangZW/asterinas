@@ -55,6 +55,8 @@ impl SimpleDrmDevice {
             Box::new(SimpleModeConfigFuncs {}),
         );
 
+        mode_config.init_standard_properties();
+
         // Drm Objects initial
         let primary_plane = DrmPlane::init(
             &mut mode_config,
@@ -75,13 +77,12 @@ impl SimpleDrmDevice {
             Box::new(SimpleEncoderFuncs),
         )?;
 
-        let _connector = DrmConnector::init_with_encoder(
+        let connector = DrmConnector::init_with_encoder(
             &mut mode_config,
             &[encoder],
             Box::new(SimpleConnectorFuncs),
         )?;
-
-        mode_config.init_standard_properties();
+        mode_config.register_connector(connector);
 
         let driver = Arc::new(SimpleDrmDriver {});
         // TODO: initialize device-specific features

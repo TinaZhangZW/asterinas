@@ -22,7 +22,8 @@ impl AnyConsoleDevice for DummyFramebufferConsole {
     }
 
     fn set_mode(&self, _mode: ConsoleMode) -> bool {
-        false
+        //Hack: remove this hack after virtio-gpu supports framebuffer console.
+        true
     }
 
     fn mode(&self) -> Option<ConsoleMode> {
@@ -30,7 +31,8 @@ impl AnyConsoleDevice for DummyFramebufferConsole {
     }
 
     fn set_keyboard_mode(&self, _mode: KeyboardMode) -> bool {
-        false
+        //Hack: remove this hack after virtio-gpu supports framebuffer console.
+        true
     }
 
     fn keyboard_mode(&self) -> Option<KeyboardMode> {

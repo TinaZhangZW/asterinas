@@ -332,6 +332,16 @@ pub fn virtio_gpu_blob_state_by_gem(gem_object: &Arc<DrmGemObject>) -> Result<(b
     Ok((obj.guest_blob, obj.host3d_blob))
 }
 
+/// Return whether a virtio-gpu GEM object is a classic dumb buffer.
+pub fn virtio_gpu_is_dumb_by_gem(gem_object: &Arc<DrmGemObject>) -> Result<bool, DrmError> {
+    let objs = objects_map().lock();
+    let obj = objs
+        .get(&object_key(gem_object))
+        .ok_or(DrmError::Invalid)?;
+
+    Ok(obj.dumb)
+}
+
 /// Return blob memory domain metadata for a virtio-gpu GEM object.
 pub fn virtio_gpu_blob_mem_by_gem(gem_object: &Arc<DrmGemObject>) -> Result<(bool, bool, u32), DrmError> {
     let objs = objects_map().lock();

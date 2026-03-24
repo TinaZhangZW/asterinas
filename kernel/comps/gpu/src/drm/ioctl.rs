@@ -50,6 +50,16 @@ bitflags::bitflags! {
     }
 }
 
+pub const DRM_RDWR: u32 = 0x2;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod)]
+pub struct DrmPrimeHandle {
+    pub handle: u32,
+    pub flags: u32,
+    pub fd: i32,
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod)]
 pub struct DrmGetCap {
@@ -121,6 +131,16 @@ pub struct DrmModeCrtc {
     pub gamma_size: u32,
     pub mode_valid: u32,
     pub mode: DrmModeModeInfo,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod)]
+pub struct DrmModeCrtcPageFlip {
+    pub crtc_id: u32,
+    pub fb_id: u32,
+    pub flags: u32,
+    pub reserved: u32,
+    pub user_data: u64,
 }
 
 #[repr(u32)]
@@ -277,6 +297,20 @@ pub struct DrmModeGetBlob {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod)]
+pub struct DrmModeCreateBlob {
+    pub data: u64,
+    pub length: u32,
+    pub blob_id: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod)]
+pub struct DrmModeDestroyBlob {
+    pub blob_id: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod)]
 pub struct DrmModeFBCmd {
     pub fb_id: u32,
     pub width: u32,
@@ -286,6 +320,23 @@ pub struct DrmModeFBCmd {
     pub depth: u32,
     /* driver specific handle */
     pub handle: u32,
+}
+
+pub const DRM_MODE_FB_INTERLACED: u32 = 1 << 0;
+pub const DRM_MODE_FB_MODIFIERS: u32 = 1 << 1;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod)]
+pub struct DrmModeFbCmd2 {
+    pub fb_id: u32,
+    pub width: u32,
+    pub height: u32,
+    pub pixel_format: u32,
+    pub flags: u32,
+    pub handles: [u32; 4],
+    pub pitches: [u32; 4],
+    pub offsets: [u32; 4],
+    pub modifier: [u64; 4],
 }
 
 #[repr(C)]
@@ -395,14 +446,42 @@ impl DrmModeObjectGetProps {
     }
 }
 
+pub const DRM_MODE_PAGE_FLIP_EVENT: u32 = 0x1;
+pub const DRM_MODE_PAGE_FLIP_ASYNC: u32 = 0x2;
+pub const DRM_MODE_PAGE_FLIP_FLAGS: u32 = DRM_MODE_PAGE_FLIP_EVENT | DRM_MODE_PAGE_FLIP_ASYNC;
+pub const DRM_MODE_ATOMIC_TEST_ONLY: u32 = 0x0100;
+pub const DRM_MODE_ATOMIC_NONBLOCK: u32 = 0x0200;
+pub const DRM_MODE_ATOMIC_ALLOW_MODESET: u32 = 0x0400;
+pub const DRM_MODE_ATOMIC_FLAGS: u32 = DRM_MODE_PAGE_FLIP_EVENT
+    | DRM_MODE_PAGE_FLIP_ASYNC
+    | DRM_MODE_ATOMIC_TEST_ONLY
+    | DRM_MODE_ATOMIC_NONBLOCK
+    | DRM_MODE_ATOMIC_ALLOW_MODESET;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod)]
+pub struct DrmModeAtomic {
+    pub flags: u32,
+    pub count_objs: u32,
+    pub objs_ptr: u64,
+    pub count_props_ptr: u64,
+    pub props_ptr: u64,
+    pub prop_values_ptr: u64,
+    pub reserved: u64,
+    pub user_data: u64,
+}
+
 pub const DRM_SYNCOBJ_CREATE_SIGNALED: u32 = 0x1;
 
 pub const DRM_SYNCOBJ_FD_TO_HANDLE_FLAGS_IMPORT_SYNC_FILE: u32 = 0x1;
+pub const DRM_SYNCOBJ_FD_TO_HANDLE_FLAGS_TIMELINE: u32 = 0x2;
 pub const DRM_SYNCOBJ_HANDLE_TO_FD_FLAGS_EXPORT_SYNC_FILE: u32 = 0x1;
+pub const DRM_SYNCOBJ_HANDLE_TO_FD_FLAGS_TIMELINE: u32 = 0x2;
 
 pub const DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL: u32 = 0x1;
 pub const DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT: u32 = 0x2;
 pub const DRM_SYNCOBJ_WAIT_FLAGS_WAIT_AVAILABLE: u32 = 0x4;
+pub const DRM_SYNCOBJ_WAIT_FLAGS_WAIT_DEADLINE: u32 = 0x8;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod)]
@@ -424,6 +503,8 @@ pub struct DrmSyncobjHandle {
     pub handle: u32,
     pub flags: u32,
     pub fd: i32,
+    pub pad: u32,
+    pub point: u64,
 }
 
 #[repr(C)]
@@ -435,6 +516,7 @@ pub struct DrmSyncobjWait {
     pub flags: u32,
     pub first_signaled: u32,
     pub pad: u32,
+    pub deadline_nsec: u64,
 }
 
 #[repr(C)]

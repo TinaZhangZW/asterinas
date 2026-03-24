@@ -13,7 +13,8 @@ use crate::drm::{
     gem::DrmGemObject,
     mode_config::{
         connector::DrmConnector, crtc::DrmCrtc, encoder::DrmEncoder, framebuffer::DrmFramebuffer,
-        funcs::ModeConfigFuncs, plane::DrmPlane, property::DrmProperty,
+        funcs::ModeConfigFuncs, plane::DrmPlane,
+        property::{DrmModeObjectType, DrmProperty, PropertyFlags},
     },
 };
 
@@ -83,6 +84,8 @@ pub struct DrmModeConfig {
     objects: HashMap<u32, Arc<dyn DrmModeObject>>,
     next_prop_id: AtomicU32,
     properties: HashMap<u32, Arc<DrmProperty>>,
+    next_blob_id: AtomicU32,
+    blobs: HashMap<u32, Arc<[u8]>>,
 
     crtc_index: AtomicU8,
     encoder_index: AtomicU8,
@@ -123,10 +126,12 @@ impl DrmModeConfig {
             preferred_depth,
             prefer_shadow: 0,
 
-            next_object_id: AtomicU32::new(0),
+            next_object_id: AtomicU32::new(1),
             objects: HashMap::new(),
             next_prop_id: AtomicU32::new(1),
             properties: HashMap::new(),
+            next_blob_id: AtomicU32::new(1),
+            blobs: HashMap::new(),
 
             crtc_index: AtomicU8::new(0),
             encoder_index: AtomicU8::new(0),
@@ -161,8 +166,81 @@ impl DrmModeConfig {
     /// Object-specific or driver-private properties must NOT be registered here;
     /// they should be added during the corresponding object initialization.
     pub fn init_standard_properties(&mut self) {
-        // TODO: iterate over the predefined set of standard properties from object/property.rs
-        // and register them in a generic, data-driven way instead of manual insertion.
+        if !self.properties.is_empty() {
+            return;
+        }
+
+        // Connector standard properties.
+        self.create_property(DrmProperty::create_blob("EDID", PropertyFlags::IMMUTABLE));
+        self.create_property(DrmProperty::create_enum(
+            "DPMS",
+            PropertyFlags::empty(),
+            &[(0, "Off"), (1, "On"), (2, "Standby"), (3, "Suspend")],
+        ));
+        self.create_property(DrmProperty::create_object(
+            "CRTC_ID",
+            PropertyFlags::ATOMIC,
+            DrmModeObjectType::Crtc,
+        ));
+        self.create_property(DrmProperty::create_bool(
+            "non-desktop",
+            PropertyFlags::IMMUTABLE,
+        ));
+
+        // Plane standard properties.
+        self.create_property(DrmProperty::create_enum(
+            "type",
+            PropertyFlags::IMMUTABLE,
+            &[(0, "Overlay"), (1, "Primary"), (2, "Cursor")],
+        ));
+        self.create_property(DrmProperty::create_range("SRC_X", PropertyFlags::ATOMIC, 0, u32::MAX as u64));
+        self.create_property(DrmProperty::create_range("SRC_Y", PropertyFlags::ATOMIC, 0, u32::MAX as u64));
+        self.create_property(DrmProperty::create_range("SRC_W", PropertyFlags::ATOMIC, 0, u32::MAX as u64));
+        self.create_property(DrmProperty::create_range("SRC_H", PropertyFlags::ATOMIC, 0, u32::MAX as u64));
+        self.create_property(DrmProperty::create_signed_range(
+            "CRTC_X",
+            PropertyFlags::ATOMIC,
+            i32::MIN as i64,
+            i32::MAX as i64,
+        ));
+        self.create_property(DrmProperty::create_signed_range(
+            "CRTC_Y",
+            PropertyFlags::ATOMIC,
+            i32::MIN as i64,
+            i32::MAX as i64,
+        ));
+        self.create_property(DrmProperty::create_range("CRTC_W", PropertyFlags::ATOMIC, 0, i32::MAX as u64));
+        self.create_property(DrmProperty::create_range("CRTC_H", PropertyFlags::ATOMIC, 0, i32::MAX as u64));
+        self.create_property(DrmProperty::create_object(
+            "FB_ID",
+            PropertyFlags::ATOMIC,
+            DrmModeObjectType::FB,
+        ));
+        self.create_property(DrmProperty::create_signed_range(
+            "IN_FENCE_FD",
+            PropertyFlags::ATOMIC,
+            -1,
+            i32::MAX as i64,
+        ));
+        self.create_property(DrmProperty::create_range(
+            "OUT_FENCE_PTR",
+            PropertyFlags::ATOMIC,
+            0,
+            u64::MAX,
+        ));
+        self.create_property(DrmProperty::create(
+            "FB_DAMAGE_CLIPS",
+            PropertyFlags::ATOMIC,
+        ));
+        self.create_property(DrmProperty::create(
+            "IN_FORMATS",
+            PropertyFlags::IMMUTABLE,
+        ));
+
+        // CRTC standard properties.
+        self.create_property(DrmProperty::create_bool("ACTIVE", PropertyFlags::ATOMIC));
+        self.create_property(DrmProperty::create("MODE_ID", PropertyFlags::ATOMIC));
+        self.create_property(DrmProperty::create("VRR_ENABLED", PropertyFlags::empty()));
     }
 
     pub fn next_object_id(&self) -> u32 {
@@ -170,6 +248,36 @@ impl DrmModeConfig {
     }
     pub fn next_prop_id(&self) -> u32 {
         self.next_prop_id.fetch_add(1, Ordering::SeqCst)
+    }
+
+    pub fn next_blob_id(&self) -> u32 {
+        self.next_blob_id.fetch_add(1, Ordering::SeqCst)
+    }
+
+    pub fn create_property(&mut self, property: DrmProperty) -> u32 {
+        let id = self.next_prop_id();
+        self.properties.insert(id, Arc::new(property));
+        id
+    }
+
+    pub fn find_property_id_by_name(&self, name: &str) -> Option<u32> {
+        self.properties
+            .iter()
+            .find_map(|(id, prop)| prop.has_name(name).then_some(*id))
+    }
+
+    pub fn create_blob(&mut self, data: Arc<[u8]>) -> u32 {
+        let id = self.next_blob_id();
+        self.blobs.insert(id, data);
+        id
+    }
+
+    pub fn get_blob(&self, id: &u32) -> Option<Arc<[u8]>> {
+        self.blobs.get(id).cloned()
+    }
+
+    pub fn remove_blob(&mut self, id: &u32) -> Option<Arc<[u8]>> {
+        self.blobs.remove(id)
     }
 
     pub fn create_framebuffer(
@@ -246,6 +354,12 @@ impl DrmModeConfig {
     }
     pub fn get_connector(&self, id: &u32) -> Option<Arc<DrmConnector>> {
         self.connectors.get(id).cloned()
+    }
+
+    pub fn register_connector(&mut self, connector: Arc<DrmConnector>) {
+        let id = connector.id();
+        self.connectors.insert(id, connector.clone());
+        self.objects.insert(id, connector);
     }
 
     pub fn get_object(&self, id: &u32) -> Option<Arc<dyn DrmModeObject>> {

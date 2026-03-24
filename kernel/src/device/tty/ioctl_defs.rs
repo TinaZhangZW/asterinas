@@ -26,3 +26,6 @@ pub type GetKeyboardMode = ioc!(KDGKBMODE,  0x4B44,     OutData<i32>);
 pub type SetKeyboardMode = ioc!(KDSKBMODE,  0x4B45,     InData<i32, PassByVal>);
 
 pub type SetOrGetFont    = ioc!(KDFONTOP,   0x4B72,     InData<CFontOp>);
+
+pub type VtActivate      = ioc!(VT_ACTIVATE,   0x5606,  InData<u32, PassByVal>);
+pub type VtWaitActive    = ioc!(VT_WAITACTIVE, 0x5607,  InData<u32, PassByVal>);

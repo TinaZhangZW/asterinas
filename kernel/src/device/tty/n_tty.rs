@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use alloc::{boxed::Box, format, sync::Arc};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use aster_console::AnyConsoleDevice;
 use aster_framebuffer::DummyFramebufferConsole;
@@ -144,6 +145,7 @@ impl<D: TtyDriver> FileIo for TtyFile<D> {
 }
 
 static TTY1: Once<Arc<Tty<VtDriver>>> = Once::new();
+static ACTIVE_VT: AtomicU32 = AtomicU32::new(1);
 
 static HVC0: Once<Arc<Tty<HvcDriver>>> = Once::new();
 
@@ -154,6 +156,26 @@ static HVC0: Once<Arc<Tty<HvcDriver>>> = Once::new();
 /// This function will panic if the `tty1` device has not been initialized.
 pub fn tty1_device() -> &'static Arc<Tty<VtDriver>> {
     TTY1.get().unwrap()
+}
+
+pub fn active_vt_index() -> u32 {
+    ACTIVE_VT.load(Ordering::Acquire)
+}
+
+pub fn active_vt_device() -> &'static Arc<Tty<VtDriver>> {
+    match active_vt_index() {
+        1 => tty1_device(),
+        _ => tty1_device(),
+    }
+}
+
+pub fn activate_vt(index: u32) -> Result<()> {
+    if index != 1 {
+        return_errno_with_message!(Errno::ENXIO, "the target VT does not exist");
+    }
+
+    ACTIVE_VT.store(index, Ordering::Release);
+    Ok(())
 }
 
 /// Returns the `hvc0` device.

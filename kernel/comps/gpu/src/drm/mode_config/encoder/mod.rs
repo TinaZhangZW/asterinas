@@ -64,6 +64,10 @@ impl DrmEncoder {
         };
 
         crtcs.iter().for_each(|c| {
+            if encoder.crtc.is_none() {
+                // Keep a current CRTC for legacy GETENCODER userspace paths.
+                encoder.crtc = Some(c.id());
+            }
             encoder.possible_crtcs |= 1u32 << c.index();
         });
 
@@ -84,6 +88,10 @@ impl DrmEncoder {
 
     pub fn possible_clones(&self) -> u32 {
         self.possible_clones
+    }
+
+    pub fn crtc_id(&self) -> u32 {
+        self.crtc.unwrap_or(0)
     }
 }
 

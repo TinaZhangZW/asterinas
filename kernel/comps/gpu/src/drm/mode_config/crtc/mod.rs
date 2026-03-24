@@ -64,6 +64,10 @@ impl DrmCrtc {
         self.gamma_size
     }
 
+    pub fn update_primary_plane_state(&self, fb_id: u32) {
+        self.primary_plane.set_state(self.id, fb_id);
+    }
+
     /// Get vblank state
     ///
     /// Returns Arc<Mutex<>> which allows access even through Arc<DrmCrtc>
@@ -84,11 +88,25 @@ impl DrmCrtc {
             None => format!("crtc-{}", id),
         };
 
+        let mut properties = HashMap::new();
+        if let Some(prop_id) = res.find_property_id_by_name("MODE_ID") {
+            properties.insert(prop_id, 0);
+        }
+        if let Some(prop_id) = res.find_property_id_by_name("ACTIVE") {
+            properties.insert(prop_id, 0);
+        }
+        if let Some(prop_id) = res.find_property_id_by_name("OUT_FENCE_PTR") {
+            properties.insert(prop_id, 0);
+        }
+        if let Some(prop_id) = res.find_property_id_by_name("VRR_ENABLED") {
+            properties.insert(prop_id, 0);
+        }
+
         let crtc = Self {
             id,
             name,
             index: res.crtc_index.fetch_add(1, Ordering::SeqCst),
-            properties: HashMap::new(),
+            properties,
             gamma_size: 0,
             primary_plane,
             cursor_plane,
@@ -98,6 +116,12 @@ impl DrmCrtc {
             vblank: Arc::new(Mutex::new(DrmVblankState::new())),
             funcs,
         };
+
+        // Plane-to-CRTC compatibility masks are consumed by GETPLANE.
+        crtc.primary_plane.add_possible_crtc(crtc.index);
+        if let Some(cursor_plane) = crtc.cursor_plane.as_ref() {
+            cursor_plane.add_possible_crtc(crtc.index);
+        }
 
         // TODO: get x, y, gamma_size
 
