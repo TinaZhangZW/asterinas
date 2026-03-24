@@ -18,8 +18,8 @@ use aster_gpu::drm::{
     },
     vblank::DrmPendingVblankEvent,
 };
-use crate::device::gpu::device::VirtioGpuDevice;
-use crate::device::gpu::VirtioGpuRect;
+
+use crate::device::gpu::{VirtioGpuRect, device::VirtioGpuDevice};
 
 pub fn virtio_gpu_output_init(
     scanout: u32,
@@ -118,7 +118,10 @@ struct ParsedEdid {
 
 impl VirtioConnectorFuncs {
     fn scanout_info(&self) -> Option<crate::device::gpu::VirtioGpuDisplayOne> {
-        self.vgpu.display_infos().get(self.scanout as usize).copied()
+        self.vgpu
+            .display_infos()
+            .get(self.scanout as usize)
+            .copied()
     }
 
     fn scanout_edid(&self) -> Option<crate::device::gpu::VirtioGpuRespEdid> {
@@ -265,10 +268,9 @@ impl ConnectorFuncs for VirtioConnectorFuncs {
 
         if info.rect.width != 0 && info.rect.height != 0 {
             let fallback = mode_from_size(info.rect.width, info.rect.height);
-            if !modes
-                .iter()
-                .any(|mode| mode.hdisplay as u32 == info.rect.width && mode.vdisplay as u32 == info.rect.height)
-            {
+            if !modes.iter().any(|mode| {
+                mode.hdisplay as u32 == info.rect.width && mode.vdisplay as u32 == info.rect.height
+            }) {
                 modes.push(fallback);
             }
         }
@@ -311,10 +313,10 @@ fn parse_preferred_edid_mode(resp: crate::device::gpu::VirtioGpuRespEdid) -> Opt
 
         let hsync_offset = (edid[dtd + 8] as u32) | (((edid[dtd + 11] as u32) & 0xC0) << 2);
         let hsync_pulse = (edid[dtd + 9] as u32) | (((edid[dtd + 11] as u32) & 0x30) << 4);
-        let vsync_offset = (((edid[dtd + 10] as u32) >> 4) & 0x0F)
-            | (((edid[dtd + 11] as u32) & 0x0C) << 2);
-        let vsync_pulse = ((edid[dtd + 10] as u32) & 0x0F)
-            | (((edid[dtd + 11] as u32) & 0x03) << 4);
+        let vsync_offset =
+            (((edid[dtd + 10] as u32) >> 4) & 0x0F) | (((edid[dtd + 11] as u32) & 0x0C) << 2);
+        let vsync_pulse =
+            ((edid[dtd + 10] as u32) & 0x0F) | (((edid[dtd + 11] as u32) & 0x03) << 4);
 
         let hdisplay = hactive.min(u16::MAX as u32) as u16;
         let vdisplay = vactive.min(u16::MAX as u32) as u16;

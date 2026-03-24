@@ -1,19 +1,28 @@
-use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
-use alloc::vec;
+use alloc::{collections::BTreeMap, sync::Arc, vec, vec::Vec};
 
-use aster_gpu::{GpuDevice, drm::{DrmError, gem::DrmGemObject, ioctl::DrmModeCreateDumb}};
-use aster_gpu::drm::gem::DrmGemBackend;
-use crate::device::gpu::{
-    VirtioGpuCtrlHdr,
-    VirtioGpuMemEntry,
+use aster_gpu::{
+    GpuDevice,
+    drm::{
+        DrmError,
+        gem::{DrmGemBackend, DrmGemObject, DrmGemObjectCleanup},
+        ioctl::DrmModeCreateDumb,
+    },
 };
-use ostd::sync::SpinLock;
+use ostd::{io::IoMem, sync::SpinLock};
 use spin::Once;
 
-use crate::device::gpu::{DEVICE_NAME, device::VirtioGpuDevice};
+use crate::device::gpu::{
+    DEVICE_NAME, VirtioGpuCtrlHdr, VirtioGpuMemEntry, device::VirtioGpuDevice,
+    drm::VIRTGPU_BLOB_FLAG_USE_MAPPABLE,
+};
+
+#[derive(Debug, Clone)]
+struct HostVisibleBlobMapping {
+    iomem: IoMem,
+    offset: usize,
+}
 
 pub struct VirtioGpuObject {
-    gem_object: Arc<DrmGemObject>,
     hw_res_handle: u32,
     width: u32,
     height: u32,
@@ -28,6 +37,7 @@ pub struct VirtioGpuObject {
     guest_blob: bool,
     blob_mem: u32,
     blob_flags: u32,
+    host_visible_mapping: Option<HostVisibleBlobMapping>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -65,7 +75,6 @@ pub struct VirtioGpuSgTable {
 
 impl VirtioGpuObject {
     fn new(
-        gem_object: Arc<DrmGemObject>,
         hw_res_handle: u32,
         width: u32,
         height: u32,
@@ -74,7 +83,6 @@ impl VirtioGpuObject {
         attach_hdr: VirtioGpuCtrlHdr,
     ) -> Self {
         Self {
-            gem_object,
             hw_res_handle,
             width,
             height,
@@ -87,20 +95,35 @@ impl VirtioGpuObject {
             guest_blob: false,
             blob_mem: 0,
             blob_flags: 0,
+            host_visible_mapping: None,
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 struct VirtioGpuCreateResult {
     resource_id: u32,
     create_hdr: VirtioGpuCtrlHdr,
+    host_visible_mapping: Option<HostVisibleBlobMapping>,
 }
 
 static VIRTIO_GPU_OBJECTS: Once<SpinLock<BTreeMap<usize, VirtioGpuObject>>> = Once::new();
 
 fn object_key(gem: &Arc<DrmGemObject>) -> usize {
     Arc::as_ptr(gem) as usize
+}
+
+fn object_key_ref(gem: &DrmGemObject) -> usize {
+    gem as *const DrmGemObject as usize
+}
+
+#[derive(Debug)]
+struct VirtioGpuGemCleanup;
+
+impl DrmGemObjectCleanup for VirtioGpuGemCleanup {
+    fn cleanup(&self, gem: &DrmGemObject) -> Result<(), DrmError> {
+        virtio_gpu_object_unref_by_key(object_key_ref(gem))
+    }
 }
 
 fn objects_map() -> &'static SpinLock<BTreeMap<usize, VirtioGpuObject>> {
@@ -110,28 +133,37 @@ fn objects_map() -> &'static SpinLock<BTreeMap<usize, VirtioGpuObject>> {
 /// Return the hardware resource handle associated with the given GEM object.
 /// This function assumes the object was previously created by
 /// `virtio_gpu_object_create` and therefore has an attached backing.
-pub fn virtio_gpu_obj_resource_id(
-    gem_object: &Arc<DrmGemObject>,
-) -> Result<u32, DrmError> {
+pub fn virtio_gpu_obj_resource_id(gem_object: &Arc<DrmGemObject>) -> Result<u32, DrmError> {
     let objs = objects_map().lock();
-    let obj = objs
-        .get(&object_key(gem_object))
-        .ok_or(DrmError::Invalid)?;
+    let obj = objs.get(&object_key(gem_object)).ok_or(DrmError::Invalid)?;
     Ok(obj.hw_res_handle)
 }
 
 pub fn virtio_gpu_object_unref(gem_object: &Arc<DrmGemObject>) -> Result<(), DrmError> {
-    let key = object_key(gem_object);
-    let hw_res = {
+    virtio_gpu_object_unref_by_key(object_key(gem_object))
+}
+
+fn virtio_gpu_object_unref_by_key(key: usize) -> Result<(), DrmError> {
+    let (hw_res, host_visible_offset) = {
         let mut objs = objects_map().lock();
         let obj = objs.remove(&key).ok_or(DrmError::Invalid)?;
-        obj.hw_res_handle
+        (
+            obj.hw_res_handle,
+            obj.host_visible_mapping
+                .as_ref()
+                .map(|mapping| mapping.offset),
+        )
     };
 
     with_vgpu(|vgpu| {
+        if let Some(offset) = host_visible_offset {
+            let _ = vgpu.resource_unmap_blob_async(hw_res);
+            vgpu.free_host_visible_blob(offset);
+        }
         // Best-effort detach before unref; unref is authoritative for freeing resource.
-        let _ = vgpu.resource_detach_backing(hw_res);
-        vgpu.resource_unref(hw_res).map_err(|_| DrmError::Invalid)?;
+        let _ = vgpu.resource_detach_backing_async(hw_res);
+        vgpu.resource_unref_async(hw_res)
+            .map_err(|_| DrmError::Invalid)?;
         Ok(())
     })
 }
@@ -194,7 +226,12 @@ pub fn virtio_gpu_object_create_with_backend(
     backend: Arc<dyn DrmGemBackend>,
     params: &VirtioGpuObjectParams,
 ) -> Result<Arc<DrmGemObject>, DrmError> {
-    let gem_object = Arc::new(DrmGemObject::new(size, pitch, backend));
+    let gem_object = Arc::new(DrmGemObject::with_cleanup(
+        size,
+        pitch,
+        backend,
+        Some(Arc::new(VirtioGpuGemCleanup)),
+    ));
 
     let create_res = with_vgpu(|vgpu| {
         let resource_id = vgpu.alloc_resource_id();
@@ -223,9 +260,22 @@ pub fn virtio_gpu_object_create_with_backend(
                     entries.as_slice(),
                 )
                 .map_err(|_| DrmError::Invalid)?;
+            let host_visible_mapping = if params.host3d_blob
+                && (params.blob_flags & VIRTGPU_BLOB_FLAG_USE_MAPPABLE) != 0
+                && vgpu.has_host_visible()
+            {
+                let size = usize::try_from(size).map_err(|_| DrmError::Invalid)?;
+                let (iomem, _map_info, offset) = vgpu
+                    .map_host_visible_blob(resource_id, size)
+                    .map_err(|_| DrmError::Invalid)?;
+                Some(HostVisibleBlobMapping { iomem, offset })
+            } else {
+                None
+            };
             Ok(VirtioGpuCreateResult {
                 resource_id,
                 create_hdr,
+                host_visible_mapping,
             })
         } else if params.virgl {
             let create_hdr = vgpu
@@ -246,25 +296,21 @@ pub fn virtio_gpu_object_create_with_backend(
             Ok(VirtioGpuCreateResult {
                 resource_id,
                 create_hdr,
+                host_visible_mapping: None,
             })
         } else {
             let create_hdr = vgpu
-                .resource_create_2d_with_fence(
-                    resource_id,
-                    params.format,
-                    width,
-                    height,
-                )
+                .resource_create_2d_with_fence(resource_id, params.format, width, height)
                 .map_err(|_| DrmError::Invalid)?;
             Ok(VirtioGpuCreateResult {
                 resource_id,
                 create_hdr,
+                host_visible_mapping: None,
             })
         }
     })?;
 
     let mut virtio_gpu_obj = VirtioGpuObject::new(
-        gem_object.clone(),
         create_res.resource_id,
         width,
         height,
@@ -277,6 +323,7 @@ pub fn virtio_gpu_object_create_with_backend(
     virtio_gpu_obj.host3d_blob = params.host3d_blob;
     virtio_gpu_obj.blob_mem = params.blob_mem;
     virtio_gpu_obj.blob_flags = params.blob_flags;
+    virtio_gpu_obj.host_visible_mapping = create_res.host_visible_mapping;
 
     objects_map()
         .lock()
@@ -309,9 +356,7 @@ pub fn virtio_gpu_resource_info_by_gem(
     gem_object: &Arc<DrmGemObject>,
 ) -> Result<(u32, u32, u32, u64, u32), DrmError> {
     let objs = objects_map().lock();
-    let obj = objs
-        .get(&object_key(gem_object))
-        .ok_or(DrmError::Invalid)?;
+    let obj = objs.get(&object_key(gem_object)).ok_or(DrmError::Invalid)?;
 
     Ok((
         obj.width,
@@ -323,11 +368,11 @@ pub fn virtio_gpu_resource_info_by_gem(
 }
 
 /// Return blob flags associated with a virtio-gpu GEM object.
-pub fn virtio_gpu_blob_state_by_gem(gem_object: &Arc<DrmGemObject>) -> Result<(bool, bool), DrmError> {
+pub fn virtio_gpu_blob_state_by_gem(
+    gem_object: &Arc<DrmGemObject>,
+) -> Result<(bool, bool), DrmError> {
     let objs = objects_map().lock();
-    let obj = objs
-        .get(&object_key(gem_object))
-        .ok_or(DrmError::Invalid)?;
+    let obj = objs.get(&object_key(gem_object)).ok_or(DrmError::Invalid)?;
 
     Ok((obj.guest_blob, obj.host3d_blob))
 }
@@ -335,30 +380,40 @@ pub fn virtio_gpu_blob_state_by_gem(gem_object: &Arc<DrmGemObject>) -> Result<(b
 /// Return whether a virtio-gpu GEM object is a classic dumb buffer.
 pub fn virtio_gpu_is_dumb_by_gem(gem_object: &Arc<DrmGemObject>) -> Result<bool, DrmError> {
     let objs = objects_map().lock();
-    let obj = objs
-        .get(&object_key(gem_object))
-        .ok_or(DrmError::Invalid)?;
+    let obj = objs.get(&object_key(gem_object)).ok_or(DrmError::Invalid)?;
 
     Ok(obj.dumb)
 }
 
 /// Return blob memory domain metadata for a virtio-gpu GEM object.
-pub fn virtio_gpu_blob_mem_by_gem(gem_object: &Arc<DrmGemObject>) -> Result<(bool, bool, u32), DrmError> {
+pub fn virtio_gpu_blob_mem_by_gem(
+    gem_object: &Arc<DrmGemObject>,
+) -> Result<(bool, bool, u32), DrmError> {
     let objs = objects_map().lock();
-    let obj = objs
-        .get(&object_key(gem_object))
-        .ok_or(DrmError::Invalid)?;
+    let obj = objs.get(&object_key(gem_object)).ok_or(DrmError::Invalid)?;
 
     Ok((obj.guest_blob, obj.host3d_blob, obj.blob_mem))
 }
 
+pub fn virtio_gpu_host_visible_mapping_by_gem(
+    gem_object: &Arc<DrmGemObject>,
+) -> Result<Option<IoMem>, DrmError> {
+    let objs = objects_map().lock();
+    let obj = objs.get(&object_key(gem_object)).ok_or(DrmError::Invalid)?;
+
+    Ok(obj
+        .host_visible_mapping
+        .as_ref()
+        .map(|mapping| mapping.iomem.clone()))
+}
+
 /// Return the last control header associated with object creation.
 /// The header carries the virtio fence id used by the creation command.
-pub fn virtio_gpu_create_hdr_by_gem(gem_object: &Arc<DrmGemObject>) -> Result<VirtioGpuCtrlHdr, DrmError> {
+pub fn virtio_gpu_create_hdr_by_gem(
+    gem_object: &Arc<DrmGemObject>,
+) -> Result<VirtioGpuCtrlHdr, DrmError> {
     let objs = objects_map().lock();
-    let obj = objs
-        .get(&object_key(gem_object))
-        .ok_or(DrmError::Invalid)?;
+    let obj = objs.get(&object_key(gem_object)).ok_or(DrmError::Invalid)?;
     obj.attach_hdr.ok_or(DrmError::Invalid)
 }
 
@@ -398,8 +453,7 @@ pub(crate) fn virtio_gpu_attach_backing_sg(
         .collect();
 
     with_vgpu(|vgpu| {
-        vgpu
-            .resource_attach_backing_sg(hw_res, entries.as_slice())
+        vgpu.resource_attach_backing_sg(hw_res, entries.as_slice())
             .map_err(|_| DrmError::Invalid)?;
         Ok(())
     })
@@ -428,7 +482,15 @@ pub fn virtio_gpu_mode_dumb_create_with_sg(
         ..Default::default()
     };
 
-    virtio_gpu_object_create_with_backend(size, pitch, args.width, args.height, initial_sg, backend, &params)
+    virtio_gpu_object_create_with_backend(
+        size,
+        pitch,
+        args.width,
+        args.height,
+        initial_sg,
+        backend,
+        &params,
+    )
 }
 
 pub fn virtio_gpu_mode_dumb_create_unreachable(

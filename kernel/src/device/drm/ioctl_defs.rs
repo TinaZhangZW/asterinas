@@ -1,16 +1,12 @@
 use aster_gpu::drm::ioctl::*;
 use aster_virtio::device::gpu::drm::{
     VirtioGpuContextInit, VirtioGpuExecbuffer, VirtioGpuGetCaps, VirtioGpuGetParam, VirtioGpuMap,
-    VirtioGpuResourceCreateBlob,
-    VirtioGpuResourceCreate,
-    VirtioGpuTransferFromHost,
-    VirtioGpuTransferToHost,
-    VirtioGpuResourceInfo,
-    VirtioGpuWait,
+    VirtioGpuResourceCreate, VirtioGpuResourceCreateBlob, VirtioGpuResourceInfo,
+    VirtioGpuTransferFromHost, VirtioGpuTransferToHost, VirtioGpuWait,
 };
-
-use crate::util::ioctl::{InData, InOutData, OutData, NoData, ioc};
 use ostd::Pod;
+
+use crate::util::ioctl::{InData, InOutData, NoData, OutData, ioc};
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod)]

@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
-use core::{cmp::min, hint::spin_loop, mem::size_of, sync::atomic::{AtomicU32, AtomicU64, Ordering}};
+use alloc::{boxed::Box, collections::BTreeMap, sync::Arc, vec, vec::Vec};
+use core::{
+    cmp::min,
+    hint::spin_loop,
+    mem::size_of,
+    sync::atomic::{AtomicU32, AtomicU64, Ordering},
+};
 
 use aster_gpu::GpuDevice;
 use aster_util::mem_obj_slice::Slice;
@@ -10,25 +15,36 @@ use log::{debug, info, warn};
 use ostd::{
     Pod,
     arch::trap::TrapFrame,
+    io::IoMem,
     mm::{HasSize, PAGE_SIZE, VmIo, dma::DmaStream},
+    prelude::println,
     sync::SpinLock,
 };
-use ostd::prelude::println;
-use super::{CMD_CTX_ATTACH_RESOURCE, CMD_CTX_CREATE, CMD_CTX_DESTROY, CMD_CTX_DETACH_RESOURCE, CMD_GET_CAPSET, CMD_GET_CAPSET_INFO,
-    CMD_GET_DISPLAY_INFO, CMD_GET_EDID, CMD_RESOURCE_ATTACH_BACKING,
-    CMD_RESOURCE_CREATE_2D, CMD_RESOURCE_CREATE_3D, CMD_RESOURCE_CREATE_BLOB, CMD_RESOURCE_UNREF,
-    CMD_RESOURCE_DETACH_BACKING, CMD_RESOURCE_FLUSH, CMD_TRANSFER_FROM_HOST_3D,
-    CMD_TRANSFER_TO_HOST_2D, CMD_TRANSFER_TO_HOST_3D, CMD_SET_SCANOUT, CMD_SET_SCANOUT_BLOB, CMD_SUBMIT_3D,
-    DEVICE_NAME, GpuFeatures, QUEUE_CONTROL,
-    QUEUE_CURSOR, RESP_OK_CAPSET, RESP_OK_CAPSET_INFO, RESP_OK_DISPLAY_INFO, RESP_OK_EDID, RESP_OK_NODATA,
-    VirtioGpuConfig, VirtioGpuCtrlHdr, VirtioGpuDisplayOne, VirtioGpuFormat, VirtioGpuGetCapset, VirtioGpuGetCapsetInfo,
-    VirtioGpuCtxCreate, VirtioGpuCtxDestroy, VirtioGpuCtxResource, VirtioGpuGetEdid, VirtioGpuMemEntry, VirtioGpuRect, VirtioGpuResourceAttachBacking,
-    VirtioGpuResourceUnref, VirtioGpuResourceDetachBacking,
-    VirtioGpuResourceCreate2d, VirtioGpuResourceCreate3d, VirtioGpuResourceCreateBlob, VirtioGpuRespCapsetInfo, VirtioGpuRespDisplayInfo,
-    VirtioGpuRespEdid, VirtioGpuResourceFlush, VirtioGpuTransferHost3d, VirtioGpuTransferToHost2d, VirtioGpuSetScanout, VirtioGpuSetScanoutBlob, VirtioGpuCmdSubmit,
+
+use super::{
+    CMD_CTX_ATTACH_RESOURCE, CMD_CTX_CREATE, CMD_CTX_DESTROY, CMD_CTX_DETACH_RESOURCE,
+    CMD_GET_CAPSET, CMD_GET_CAPSET_INFO, CMD_GET_DISPLAY_INFO, CMD_GET_EDID,
+    CMD_RESOURCE_ATTACH_BACKING, CMD_RESOURCE_CREATE_2D, CMD_RESOURCE_CREATE_3D,
+    CMD_RESOURCE_CREATE_BLOB, CMD_RESOURCE_DETACH_BACKING, CMD_RESOURCE_FLUSH,
+    CMD_RESOURCE_MAP_BLOB, CMD_RESOURCE_UNMAP_BLOB, CMD_RESOURCE_UNREF, CMD_SET_SCANOUT,
+    CMD_SET_SCANOUT_BLOB, CMD_SUBMIT_3D, CMD_TRANSFER_FROM_HOST_3D, CMD_TRANSFER_TO_HOST_2D,
+    CMD_TRANSFER_TO_HOST_3D, DEVICE_NAME, GpuFeatures, QUEUE_CONTROL, QUEUE_CURSOR, RESP_OK_CAPSET,
+    RESP_OK_CAPSET_INFO, RESP_OK_DISPLAY_INFO, RESP_OK_EDID, RESP_OK_MAP_INFO, RESP_OK_NODATA,
+    VirtioGpuCmdSubmit, VirtioGpuConfig, VirtioGpuCtrlHdr, VirtioGpuCtxCreate, VirtioGpuCtxDestroy,
+    VirtioGpuCtxResource, VirtioGpuDisplayOne, VirtioGpuFormat, VirtioGpuGetCapset,
+    VirtioGpuGetCapsetInfo, VirtioGpuGetEdid, VirtioGpuMemEntry, VirtioGpuRect,
+    VirtioGpuResourceAttachBacking, VirtioGpuResourceCreate2d, VirtioGpuResourceCreate3d,
+    VirtioGpuResourceCreateBlob, VirtioGpuResourceDetachBacking, VirtioGpuResourceFlush,
+    VirtioGpuResourceMapBlob, VirtioGpuResourceUnmapBlob, VirtioGpuResourceUnref,
+    VirtioGpuRespCapsetInfo, VirtioGpuRespDisplayInfo, VirtioGpuRespEdid, VirtioGpuRespMapInfo,
+    VirtioGpuSetScanout, VirtioGpuSetScanoutBlob, VirtioGpuTransferHost3d,
+    VirtioGpuTransferToHost2d,
 };
 use crate::{
-    device::{VirtioDeviceError, gpu::{self, drm::VirtioGpuDrmDrvier}},
+    device::{
+        VirtioDeviceError,
+        gpu::{self, drm::VirtioGpuDrmDrvier},
+    },
     id_alloc::SyncIdAlloc,
     queue::{QueueError, VirtQueue},
     transport::{ConfigManager, VirtioTransport},
@@ -94,6 +110,7 @@ const CTRL_RESP_STRIDE: usize = size_of::<VirtioGpuRespEdid>();
 const VIRTIO_RING_F_INDIRECT_DESC: u64 = 1 << 28;
 const VIRTIO_GPU_FLAG_FENCE: u32 = 1 << 0;
 const VIRTIO_GPU_FLAG_INFO_RING_IDX: u32 = 1 << 1;
+const VIRTIO_GPU_SHM_ID_HOST_VISIBLE: u8 = 1;
 
 bitflags! {
     struct VirtioGpuCaps: u32 {
@@ -103,6 +120,7 @@ bitflags! {
         const RESOURCE_ASSIGN_UUID = 1 << 3;
         const RESOURCE_BLOB = 1 << 4;
         const CONTEXT_INIT = 1 << 5;
+        const HOST_VISIBLE = 1 << 6;
     }
 }
 
@@ -119,6 +137,8 @@ pub struct VirtioGpuDevice {
     next_context_id: AtomicU32,
     next_fence_id: AtomicU64,
     caps: VirtioGpuCaps,
+    host_visible_region: Option<IoMem>,
+    host_visible_allocs: SpinLock<BTreeMap<usize, usize>>,
     num_scanouts: SpinLock<u32>,
     display_infos: SpinLock<Vec<VirtioGpuDisplayOne>>,
     display_info_resp: SpinLock<Option<VirtioGpuRespDisplayInfo>>,
@@ -188,6 +208,22 @@ impl VirtioGpuDevice {
         if gpu_features.contains(GpuFeatures::CONTEXT_INIT) {
             caps.insert(VirtioGpuCaps::CONTEXT_INIT);
         }
+        let host_visible_region = transport.shm_region(VIRTIO_GPU_SHM_ID_HOST_VISIBLE);
+        if host_visible_region.is_some() {
+            println!("virtio-gpu device has host visible shared memory region");
+            caps.insert(VirtioGpuCaps::HOST_VISIBLE);
+        }
+
+        // Linux expects HOST_VISIBLE to be paired with RESOURCE_BLOB. Some
+        // virtual device setups may expose the host-visible shared-memory
+        // capability even when the resource-blob feature bit is not reflected
+        // in the offered feature bitmap seen by the guest.
+        if caps.contains(VirtioGpuCaps::HOST_VISIBLE)
+            && !caps.contains(VirtioGpuCaps::RESOURCE_BLOB)
+        {
+            warn!("virtio-gpu: inferring RESOURCE_BLOB from HOST_VISIBLE shared memory capability");
+            caps.insert(VirtioGpuCaps::RESOURCE_BLOB);
+        }
 
         let config_manager = VirtioGpuConfig::new_manager(transport.as_ref());
 
@@ -208,6 +244,8 @@ impl VirtioGpuDevice {
             next_context_id: AtomicU32::new(1),
             next_fence_id: AtomicU64::new(1),
             caps,
+            host_visible_region,
+            host_visible_allocs: SpinLock::new(BTreeMap::new()),
             num_scanouts: SpinLock::new(initial_config.num_scanouts),
             display_infos: SpinLock::new(Vec::new()),
             display_info_resp: SpinLock::new(None),
@@ -250,12 +288,13 @@ impl VirtioGpuDevice {
             config.num_scanouts, config.num_capsets
         );
         info!(
-            "virtio-gpu features: virgl_3d={}, edid={}, indirect_desc={}, resource_uuid={}, resource_blob={}, context_init={}",
+            "virtio-gpu features: virgl_3d={}, edid={}, indirect_desc={}, resource_uuid={}, resource_blob={}, host_visible={}, context_init={}",
             device.has_virgl_3d(),
             device.has_edid(),
             device.has_indirect(),
             device.has_resource_assign_uuid(),
             device.has_resource_blob(),
+            device.has_host_visible(),
             device.has_context_init()
         );
         *device.num_scanouts.lock() = config.num_scanouts;
@@ -416,8 +455,8 @@ impl VirtioGpuDevice {
         };
         req.debug_name[..debug_name.len()].copy_from_slice(debug_name);
 
-        let _: VirtioGpuCtrlHdr =
-            self.submit_control_command::<VirtioGpuCtxCreate, VirtioGpuCtrlHdr>(&req, RESP_OK_NODATA)?;
+        let _: VirtioGpuCtrlHdr = self
+            .submit_control_command::<VirtioGpuCtxCreate, VirtioGpuCtrlHdr>(&req, RESP_OK_NODATA)?;
         Ok(())
     }
 
@@ -430,8 +469,28 @@ impl VirtioGpuDevice {
             },
         };
 
-        let _: VirtioGpuCtrlHdr =
-            self.submit_control_command::<VirtioGpuCtxDestroy, VirtioGpuCtrlHdr>(&req, RESP_OK_NODATA)?;
+        let _: VirtioGpuCtrlHdr = self
+            .submit_control_command::<VirtioGpuCtxDestroy, VirtioGpuCtrlHdr>(
+                &req,
+                RESP_OK_NODATA,
+            )?;
+        Ok(())
+    }
+
+    pub fn context_destroy_async(&self, context_id: u32) -> Result<(), VirtioGpuCommandError> {
+        let req = VirtioGpuCtxDestroy {
+            hdr: VirtioGpuCtrlHdr {
+                type_: CMD_CTX_DESTROY,
+                ctx_id: context_id,
+                ..Default::default()
+            },
+        };
+
+        let _: VirtioGpuCtrlHdr = self
+            .submit_control_command_unfenced::<VirtioGpuCtxDestroy, VirtioGpuCtrlHdr>(
+                &req,
+                RESP_OK_NODATA,
+            )?;
         Ok(())
     }
 
@@ -450,8 +509,11 @@ impl VirtioGpuDevice {
             padding: 0,
         };
 
-        let _: VirtioGpuCtrlHdr =
-            self.submit_control_command::<VirtioGpuCtxResource, VirtioGpuCtrlHdr>(&req, RESP_OK_NODATA)?;
+        let _: VirtioGpuCtrlHdr = self
+            .submit_control_command::<VirtioGpuCtxResource, VirtioGpuCtrlHdr>(
+                &req,
+                RESP_OK_NODATA,
+            )?;
         Ok(())
     }
 
@@ -470,9 +532,155 @@ impl VirtioGpuDevice {
             padding: 0,
         };
 
-        let _: VirtioGpuCtrlHdr =
-            self.submit_control_command::<VirtioGpuCtxResource, VirtioGpuCtrlHdr>(&req, RESP_OK_NODATA)?;
+        let _: VirtioGpuCtrlHdr = self
+            .submit_control_command::<VirtioGpuCtxResource, VirtioGpuCtrlHdr>(
+                &req,
+                RESP_OK_NODATA,
+            )?;
         Ok(())
+    }
+
+    pub fn context_detach_resource_async(
+        &self,
+        context_id: u32,
+        resource_id: u32,
+    ) -> Result<(), VirtioGpuCommandError> {
+        let req = VirtioGpuCtxResource {
+            hdr: VirtioGpuCtrlHdr {
+                type_: CMD_CTX_DETACH_RESOURCE,
+                ctx_id: context_id,
+                ..Default::default()
+            },
+            resource_id,
+            padding: 0,
+        };
+
+        let _: VirtioGpuCtrlHdr = self
+            .submit_control_command_unfenced::<VirtioGpuCtxResource, VirtioGpuCtrlHdr>(
+                &req,
+                RESP_OK_NODATA,
+            )?;
+        Ok(())
+    }
+
+    pub fn resource_map_blob(
+        &self,
+        resource_id: u32,
+        offset: u64,
+    ) -> Result<u32, VirtioGpuCommandError> {
+        let req = VirtioGpuResourceMapBlob {
+            hdr: VirtioGpuCtrlHdr {
+                type_: CMD_RESOURCE_MAP_BLOB,
+                ..Default::default()
+            },
+            resource_id,
+            padding: 0,
+            offset,
+        };
+
+        let resp: VirtioGpuRespMapInfo = self
+            .submit_control_command::<VirtioGpuResourceMapBlob, VirtioGpuRespMapInfo>(
+                &req,
+                RESP_OK_MAP_INFO,
+            )?;
+        Ok(resp.map_info)
+    }
+
+    pub fn resource_unmap_blob(&self, resource_id: u32) -> Result<(), VirtioGpuCommandError> {
+        let req = VirtioGpuResourceUnmapBlob {
+            hdr: VirtioGpuCtrlHdr {
+                type_: CMD_RESOURCE_UNMAP_BLOB,
+                ..Default::default()
+            },
+            resource_id,
+            padding: 0,
+        };
+
+        let _: VirtioGpuCtrlHdr = self
+            .submit_control_command::<VirtioGpuResourceUnmapBlob, VirtioGpuCtrlHdr>(
+                &req,
+                RESP_OK_NODATA,
+            )?;
+        Ok(())
+    }
+
+    pub fn resource_unmap_blob_async(&self, resource_id: u32) -> Result<(), VirtioGpuCommandError> {
+        let req = VirtioGpuResourceUnmapBlob {
+            hdr: VirtioGpuCtrlHdr {
+                type_: CMD_RESOURCE_UNMAP_BLOB,
+                ..Default::default()
+            },
+            resource_id,
+            padding: 0,
+        };
+
+        let _: VirtioGpuCtrlHdr = self
+            .submit_control_command_unfenced::<VirtioGpuResourceUnmapBlob, VirtioGpuCtrlHdr>(
+                &req,
+                RESP_OK_NODATA,
+            )?;
+        Ok(())
+    }
+
+    fn allocate_host_visible_offset(&self, size: usize) -> Result<usize, VirtioGpuCommandError> {
+        let region = self
+            .host_visible_region
+            .as_ref()
+            .ok_or(VirtioGpuCommandError::InvalidParameter)?;
+        let region_size = region.size();
+        let size = size.next_multiple_of(PAGE_SIZE);
+        let mut allocs = self.host_visible_allocs.lock();
+        let mut cursor = 0usize;
+
+        for (start, len) in allocs.iter() {
+            let aligned = cursor.next_multiple_of(PAGE_SIZE);
+            if aligned.checked_add(size).is_some_and(|end| end <= *start) {
+                allocs.insert(aligned, size);
+                return Ok(aligned);
+            }
+            cursor = start.saturating_add(*len);
+        }
+
+        let aligned = cursor.next_multiple_of(PAGE_SIZE);
+        if aligned
+            .checked_add(size)
+            .is_none_or(|end| end > region_size)
+        {
+            return Err(VirtioGpuCommandError::InvalidParameter);
+        }
+
+        allocs.insert(aligned, size);
+        Ok(aligned)
+    }
+
+    pub fn map_host_visible_blob(
+        &self,
+        resource_id: u32,
+        size: usize,
+    ) -> Result<(IoMem, u32, usize), VirtioGpuCommandError> {
+        let region = self
+            .host_visible_region
+            .as_ref()
+            .ok_or(VirtioGpuCommandError::InvalidParameter)?
+            .clone();
+        let aligned_size = size.next_multiple_of(PAGE_SIZE);
+        let offset = self.allocate_host_visible_offset(size)?;
+
+        match self.resource_map_blob(resource_id, offset as u64) {
+            Ok(map_info) => Ok((
+                region.slice(offset..offset + aligned_size),
+                map_info,
+                offset,
+            )),
+            Err(err) => {
+                self.host_visible_allocs.lock().remove(&offset);
+                Err(err)
+            }
+        }
+    }
+
+    pub fn free_host_visible_blob(&self, offset: usize) {
+        self.host_visible_allocs.lock().remove(&offset);
     }
 
     pub fn get_display_info(&self) -> Result<VirtioGpuRespDisplayInfo, VirtioGpuCommandError> {
@@ -720,7 +928,41 @@ impl VirtioGpuDevice {
         Ok(())
     }
 
-    pub fn resource_detach_backing(
+    pub fn resource_unref_async(&self, resource_id: u32) -> Result<(), VirtioGpuCommandError> {
+        let req = VirtioGpuResourceUnref {
+            hdr: VirtioGpuCtrlHdr {
+                type_: CMD_RESOURCE_UNREF,
+                ..Default::default()
+            },
+            resource_id,
+            padding: 0,
+        };
+        let _: VirtioGpuCtrlHdr = self
+            .submit_control_command_unfenced::<VirtioGpuResourceUnref, VirtioGpuCtrlHdr>(
+                &req,
+                RESP_OK_NODATA,
+            )?;
+        Ok(())
+    }
+
+    pub fn resource_detach_backing(&self, resource_id: u32) -> Result<(), VirtioGpuCommandError> {
+        let req = VirtioGpuResourceDetachBacking {
+            hdr: VirtioGpuCtrlHdr {
+                type_: CMD_RESOURCE_DETACH_BACKING,
+                ..Default::default()
+            },
+            resource_id,
+            padding: 0,
+        };
+        let _: VirtioGpuCtrlHdr = self
+            .submit_control_command::<VirtioGpuResourceDetachBacking, VirtioGpuCtrlHdr>(
+                &req,
+                RESP_OK_NODATA,
+            )?;
+        Ok(())
+    }
+
+    pub fn resource_detach_backing_async(
         &self,
         resource_id: u32,
     ) -> Result<(), VirtioGpuCommandError> {
@@ -733,7 +975,7 @@ impl VirtioGpuDevice {
             padding: 0,
         };
         let _: VirtioGpuCtrlHdr = self
-            .submit_control_command::<VirtioGpuResourceDetachBacking, VirtioGpuCtrlHdr>(
+            .submit_control_command_unfenced::<VirtioGpuResourceDetachBacking, VirtioGpuCtrlHdr>(
                 &req,
                 RESP_OK_NODATA,
             )?;
@@ -892,7 +1134,11 @@ impl VirtioGpuDevice {
         Ok(resp_hdr)
     }
 
-    pub fn resource_flush(&self, resource_id: u32, rect: VirtioGpuRect) -> Result<(), VirtioGpuCommandError> {
+    pub fn resource_flush(
+        &self,
+        resource_id: u32,
+        rect: VirtioGpuRect,
+    ) -> Result<(), VirtioGpuCommandError> {
         let req = VirtioGpuResourceFlush {
             hdr: VirtioGpuCtrlHdr {
                 type_: CMD_RESOURCE_FLUSH,
@@ -1011,8 +1257,8 @@ impl VirtioGpuDevice {
             scanout_id,
             resource_id,
         };
-        let _: VirtioGpuCtrlHdr =
-            self.submit_control_command::<VirtioGpuSetScanout, VirtioGpuCtrlHdr>(
+        let _: VirtioGpuCtrlHdr = self
+            .submit_control_command::<VirtioGpuSetScanout, VirtioGpuCtrlHdr>(
                 &req,
                 RESP_OK_NODATA,
             )?;
@@ -1046,20 +1292,29 @@ impl VirtioGpuDevice {
             offsets,
         };
 
-        let _: VirtioGpuCtrlHdr =
-            self.submit_control_command::<VirtioGpuSetScanoutBlob, VirtioGpuCtrlHdr>(
+        let _: VirtioGpuCtrlHdr = self
+            .submit_control_command::<VirtioGpuSetScanoutBlob, VirtioGpuCtrlHdr>(
                 &req,
                 RESP_OK_NODATA,
             )?;
         Ok(())
     }
 
-    pub fn submit_3d(&self, command: &[u8], ctx_id: u32, ring_idx: Option<u8>) -> Result<u64, VirtioGpuCommandError> {
+    pub fn submit_3d(
+        &self,
+        command: &[u8],
+        ctx_id: u32,
+        ring_idx: Option<u8>,
+    ) -> Result<u64, VirtioGpuCommandError> {
         if command.is_empty() {
             return Err(VirtioGpuCommandError::InvalidParameter);
         }
 
-        let size = u32::try_from(command.len()).map_err(|_| VirtioGpuCommandError::InvalidParameter)?;
+        // Queue SUBMIT_3D like Linux execbuffer: return once the control
+        // command is consumed rather than waiting for fenced completion.
+        let submit_id = self.alloc_fence_id();
+        let size =
+            u32::try_from(command.len()).map_err(|_| VirtioGpuCommandError::InvalidParameter)?;
         let mut hdr = VirtioGpuCtrlHdr {
             type_: CMD_SUBMIT_3D,
             ctx_id,
@@ -1079,17 +1334,19 @@ impl VirtioGpuDevice {
         let req_dma = Arc::new(DmaStream::alloc(req_len.div_ceil(PAGE_SIZE), false).unwrap());
         let req_slice = Slice::new(req_dma, 0..req_len);
         req_slice.write_val(0, &req).unwrap();
-        let fence_id = self.alloc_fence_id();
-        self.stamp_fence(&req_slice, fence_id);
+        req_slice.sync_to_device().unwrap();
 
         let cmd_dma = Arc::new(DmaStream::alloc(command.len().div_ceil(PAGE_SIZE), false).unwrap());
         let cmd_slice = Slice::new(cmd_dma, 0..command.len());
         cmd_slice.write_bytes(0, command).unwrap();
+        cmd_slice.sync_to_device().unwrap();
 
         let resp_len = size_of::<VirtioGpuCtrlHdr>();
         let resp_dma = Arc::new(DmaStream::alloc(resp_len.div_ceil(PAGE_SIZE), false).unwrap());
         let resp_slice = Slice::new(resp_dma, 0..resp_len);
-        resp_slice.write_val(0, &VirtioGpuCtrlHdr::default()).unwrap();
+        resp_slice
+            .write_val(0, &VirtioGpuCtrlHdr::default())
+            .unwrap();
         resp_slice.sync_to_device().unwrap();
 
         self.submit_control_dma_buffers(&[&req_slice, &cmd_slice], &[&resp_slice])?;
@@ -1099,14 +1356,8 @@ impl VirtioGpuDevice {
         if resp_hdr.type_ != RESP_OK_NODATA {
             return Err(VirtioGpuCommandError::UnexpectedResponse(resp_hdr.type_));
         }
-        if resp_hdr.fence_id != fence_id {
-            return Err(VirtioGpuCommandError::FenceMismatch {
-                expected: fence_id,
-                got: resp_hdr.fence_id,
-            });
-        }
 
-        Ok(fence_id)
+        Ok(submit_id)
     }
 
     pub fn num_queues(&self) -> usize {
@@ -1139,6 +1390,10 @@ impl VirtioGpuDevice {
 
     pub fn has_resource_blob(&self) -> bool {
         self.caps.contains(VirtioGpuCaps::RESOURCE_BLOB)
+    }
+
+    pub fn has_host_visible(&self) -> bool {
+        self.caps.contains(VirtioGpuCaps::HOST_VISIBLE)
     }
 
     pub fn has_context_init(&self) -> bool {
@@ -1244,6 +1499,68 @@ impl VirtioGpuDevice {
 
         let resp: Resp = resp_slice.read_val(0).unwrap();
         Ok((resp, req_fence_id))
+    }
+
+    fn submit_control_command_unfenced<Req, Resp>(
+        &self,
+        req: &Req,
+        expected_resp_type: u32,
+    ) -> Result<Resp, VirtioGpuCommandError>
+    where
+        Req: Pod,
+        Resp: Pod + Default,
+    {
+        if size_of::<Req>() > CTRL_REQ_STRIDE {
+            println!(
+                "[virtio-gpu] error: control command request size {} exceeds the stride {}",
+                size_of::<Req>(),
+                CTRL_REQ_STRIDE
+            );
+            return Err(VirtioGpuCommandError::RequestTooLarge(size_of::<Req>()));
+        }
+        if size_of::<Resp>() > CTRL_RESP_STRIDE {
+            println!(
+                "[virtio-gpu] error: control command response size {} exceeds the stride {}",
+                size_of::<Resp>(),
+                CTRL_RESP_STRIDE
+            );
+            return Err(VirtioGpuCommandError::ResponseTooLarge(size_of::<Resp>()));
+        }
+
+        let id = self.id_allocator.alloc();
+
+        let req_slice = {
+            let req_slice = Slice::new(
+                self.ctrl_requests.clone(),
+                id * CTRL_REQ_STRIDE..(id + 1) * CTRL_REQ_STRIDE,
+            );
+            req_slice.write_val(0, req).unwrap();
+            req_slice.sync_to_device().unwrap();
+            req_slice
+        };
+
+        let resp_slice = {
+            let resp_slice = Slice::new(
+                self.ctrl_responses.clone(),
+                id * CTRL_RESP_STRIDE..(id + 1) * CTRL_RESP_STRIDE,
+            );
+            let default_resp = Resp::default();
+            resp_slice.write_val(0, &default_resp).unwrap();
+            resp_slice.sync_to_device().unwrap();
+            resp_slice
+        };
+
+        self.submit_control_dma_buffers(&[&req_slice], &[&resp_slice])?;
+
+        self.id_allocator.dealloc(id);
+
+        resp_slice.sync_from_device().unwrap();
+        let resp_hdr: VirtioGpuCtrlHdr = resp_slice.read_val(0).unwrap();
+        if resp_hdr.type_ != expected_resp_type && resp_hdr.type_ != RESP_OK_NODATA {
+            return Err(VirtioGpuCommandError::UnexpectedResponse(resp_hdr.type_));
+        }
+
+        Ok(resp_slice.read_val(0).unwrap())
     }
 
     pub fn has_cursor_queue(&self) -> bool {

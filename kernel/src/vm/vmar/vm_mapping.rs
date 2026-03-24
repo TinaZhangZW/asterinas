@@ -19,7 +19,7 @@ use ostd::{
 
 use super::{RssType, interval_set::Interval, util::is_intersected, vmar_impls::RssDelta};
 use crate::{
-    fs::utils::Inode,
+    fs::{file_handle::MappableOwner, utils::Inode},
     prelude::*,
     thread::exception::PageFaultInfo,
     vm::{
@@ -69,6 +69,8 @@ pub struct VmMapping {
     /// And the `mapped_mem` field must be the page cache of the inode, i.e.
     /// [`MappedMemory::Vmo`].
     inode: Option<Arc<dyn Inode>>,
+    /// Optional owner retained until the mapping is destroyed.
+    mapping_owner: Option<Arc<dyn MappableOwner>>,
     /// Whether the mapping is shared.
     ///
     /// The updates to a shared mapping are visible among processes, or carried
@@ -97,6 +99,7 @@ impl VmMapping {
         map_to_addr: Vaddr,
         mapped_mem: MappedMemory,
         inode: Option<Arc<dyn Inode>>,
+        mapping_owner: Option<Arc<dyn MappableOwner>>,
         is_shared: bool,
         handle_page_faults_around: bool,
         perms: VmPerms,
@@ -106,6 +109,7 @@ impl VmMapping {
             map_to_addr,
             mapped_mem,
             inode,
+            mapping_owner,
             is_shared,
             handle_page_faults_around,
             perms,
@@ -116,6 +120,7 @@ impl VmMapping {
         VmMapping {
             mapped_mem: self.mapped_mem.dup(),
             inode: self.inode.clone(),
+            mapping_owner: self.mapping_owner.clone(),
             ..*self
         }
     }
@@ -573,18 +578,30 @@ impl VmMapping {
 
         let left_size = at - self.map_to_addr;
         let right_size = self.map_size.get() - left_size;
+        let inode = self.inode.clone();
+        let mapping_owner = self.mapping_owner.clone();
+        let is_shared = self.is_shared;
+        let handle_page_faults_around = self.handle_page_faults_around;
+        let perms = self.perms;
         let left = Self {
             map_to_addr: self.map_to_addr,
             map_size: NonZeroUsize::new(left_size).unwrap(),
             mapped_mem: l_mapped_mem,
-            inode: self.inode.clone(),
-            ..self
+            inode: inode.clone(),
+            mapping_owner: mapping_owner.clone(),
+            is_shared,
+            handle_page_faults_around,
+            perms,
         };
         let right = Self {
             map_to_addr: at,
             map_size: NonZeroUsize::new(right_size).unwrap(),
             mapped_mem: r_mapped_mem,
-            ..self
+            inode,
+            mapping_owner,
+            is_shared,
+            handle_page_faults_around,
+            perms,
         };
 
         Ok((left, right))
@@ -900,7 +917,11 @@ fn try_merge(left: &VmMapping, right: &VmMapping) -> Option<VmMapping> {
         map_size,
         mapped_mem,
         inode: left.inode.clone(),
-        ..*left
+        mapping_owner: left.mapping_owner.clone(),
+        map_to_addr: left.map_to_addr,
+        is_shared: left.is_shared,
+        handle_page_faults_around: left.handle_page_faults_around,
+        perms: left.perms,
     })
 }
 

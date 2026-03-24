@@ -1,4 +1,12 @@
-use core::{fmt::Display, sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering}, time::Duration};
+use alloc::{
+    collections::{BTreeSet, VecDeque},
+    sync::Weak,
+};
+use core::{
+    fmt::Display,
+    sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
+    time::Duration,
+};
 
 use aster_framebuffer::FRAMEBUFFER;
 use aster_gpu::drm::{
@@ -7,23 +15,29 @@ use aster_gpu::drm::{
     gem::{DrmGemBackend, DrmGemObject},
     ioctl::*,
     mode_config::{
-        DrmModeModeInfo, DrmModeObject, funcs::drm_atomic_helper_commit, plane::PlaneType,
+        DrmModeModeInfo, DrmModeObject,
+        funcs::drm_atomic_helper_commit,
+        plane::PlaneType,
         property::{PropertyEnum, PropertyKind},
     },
 };
-use hashbrown::HashMap;
-use alloc::{collections::{BTreeSet, VecDeque}, sync::Weak};
-use spin::Once;
-use ostd::mm::{VmIo, io_util::HasVmReaderWriter, HasPaddr, HasSize};
-use ostd::sync::WaitQueue;
-use ostd::Pod;
-use crate::vm::vmo::{CommitFlags};
-use aster_virtio::device::gpu::drm::gem::{
-    VirtioGpuObjectParams, VirtioGpuSgEntry, VirtioGpuSgTable, virtio_gpu_blob_object_create, virtio_gpu_mode_dumb_create_with_sg,
-    virtio_gpu_blob_mem_by_gem, virtio_gpu_blob_state_by_gem, virtio_gpu_create_hdr_by_gem,
-    virtio_gpu_is_dumb_by_gem, virtio_gpu_obj_resource_id, virtio_gpu_object_create,
-    virtio_gpu_object_unref,
+use aster_virtio::device::gpu::{
+    device::VirtioGpuDevice,
+    drm as virtio_gpu_drm,
+    drm::gem::{
+        VirtioGpuObjectParams, VirtioGpuSgEntry, VirtioGpuSgTable, virtio_gpu_blob_mem_by_gem,
+        virtio_gpu_blob_object_create, virtio_gpu_blob_state_by_gem, virtio_gpu_create_hdr_by_gem,
+        virtio_gpu_host_visible_mapping_by_gem, virtio_gpu_is_dumb_by_gem,
+        virtio_gpu_mode_dumb_create_with_sg, virtio_gpu_obj_resource_id, virtio_gpu_object_create,
+    },
 };
+use hashbrown::{HashMap, hash_map::Entry};
+use ostd::{
+    Pod,
+    mm::{HasPaddr, HasSize, VmIo, io_util::HasVmReaderWriter},
+    sync::WaitQueue,
+};
+use spin::Once;
 
 use crate::{
     current_userspace,
@@ -49,10 +63,7 @@ use crate::{
     },
     time::{clocks::MonotonicClock, wait::WaitTimeout},
     util::ioctl::{InOutData, RawIoctl, dispatch_ioctl, ioc},
-};
-use aster_virtio::device::gpu::{
-    device::VirtioGpuDevice,
-    drm as virtio_gpu_drm,
+    vm::vmo::CommitFlags,
 };
 
 struct DrmSyncPoint {
@@ -60,6 +71,7 @@ struct DrmSyncPoint {
     signaled_timestamp_ns: AtomicU64,
     wait_queue: WaitQueue,
     eventfd_listeners: Mutex<Vec<Arc<dyn FileLike>>>,
+    signal_dependents: Mutex<Vec<Arc<DrmSyncPoint>>>,
 }
 
 #[repr(C)]
@@ -107,6 +119,7 @@ impl DrmSyncPoint {
             }),
             wait_queue: WaitQueue::new(),
             eventfd_listeners: Mutex::new(Vec::new()),
+            signal_dependents: Mutex::new(Vec::new()),
         }
     }
 
@@ -127,6 +140,11 @@ impl DrmSyncPoint {
         let listeners = core::mem::take(&mut *self.eventfd_listeners.lock());
         for eventfd in listeners {
             signal_eventfd(&eventfd);
+        }
+
+        let dependents = core::mem::take(&mut *self.signal_dependents.lock());
+        for point in dependents {
+            point.signal();
         }
     }
 
@@ -153,11 +171,24 @@ impl DrmSyncPoint {
             }
         }
     }
+
+    fn forward_signal_to(&self, point: Arc<DrmSyncPoint>) {
+        if self.is_signaled() {
+            point.signal();
+            return;
+        }
+
+        self.signal_dependents.lock().push(point.clone());
+        if self.is_signaled() {
+            point.signal();
+        }
+    }
 }
 
 struct DrmSyncObj {
     binary: Mutex<Option<Arc<DrmSyncPoint>>>,
     timeline: Mutex<HashMap<u64, Arc<DrmSyncPoint>>>,
+    binary_available_listeners: Mutex<Vec<Arc<dyn FileLike>>>,
     timeline_available_listeners: Mutex<HashMap<u64, Vec<Arc<dyn FileLike>>>>,
 }
 
@@ -166,6 +197,7 @@ impl DrmSyncObj {
         Self {
             binary: Mutex::new(initially_signaled.then(|| Arc::new(DrmSyncPoint::new(true)))),
             timeline: Mutex::new(HashMap::new()),
+            binary_available_listeners: Mutex::new(Vec::new()),
             timeline_available_listeners: Mutex::new(HashMap::new()),
         }
     }
@@ -186,7 +218,7 @@ impl DrmSyncObj {
     }
 
     fn binary_signal(&self) {
-        self.binary_point_or_create().signal();
+        self.replace_binary_point(Some(Arc::new(DrmSyncPoint::new(true))));
     }
 
     fn binary_reset(&self) {
@@ -202,6 +234,13 @@ impl DrmSyncObj {
             let mut guard = self.binary.lock();
             core::mem::replace(&mut *guard, new_point.clone())
         };
+
+        if new_point.is_some() {
+            let listeners = core::mem::take(&mut *self.binary_available_listeners.lock());
+            for eventfd in listeners {
+                signal_eventfd(&eventfd);
+            }
+        }
 
         let same_point = match (&old_point, &new_point) {
             (Some(old), Some(new)) => Arc::ptr_eq(old, new),
@@ -245,8 +284,47 @@ impl DrmSyncObj {
             .unwrap_or(0)
     }
 
+    fn highest_submitted_point(&self) -> u64 {
+        self.timeline.lock().keys().copied().max().unwrap_or(0)
+    }
+
     fn has_timeline_point(&self, point: u64) -> bool {
         self.timeline.lock().contains_key(&point)
+    }
+
+    fn has_point(&self, point: u64) -> bool {
+        if point == 0 {
+            self.binary.lock().is_some()
+        } else {
+            self.has_timeline_point(point)
+        }
+    }
+
+    fn point(&self, point: u64, create: bool) -> Option<Arc<DrmSyncPoint>> {
+        if point == 0 {
+            if create {
+                Some(self.binary_point_or_create())
+            } else {
+                self.binary_point()
+            }
+        } else {
+            self.timeline_point(point, create)
+        }
+    }
+
+    fn register_binary_available_eventfd(&self, eventfd: Arc<dyn FileLike>) {
+        if self.binary.lock().is_some() {
+            signal_eventfd(&eventfd);
+            return;
+        }
+
+        self.binary_available_listeners.lock().push(eventfd);
+        if self.binary.lock().is_some() {
+            let listeners = core::mem::take(&mut *self.binary_available_listeners.lock());
+            for eventfd in listeners {
+                signal_eventfd(&eventfd);
+            }
+        }
     }
 
     fn register_timeline_available_eventfd(&self, point: u64, eventfd: Arc<dyn FileLike>) {
@@ -263,12 +341,38 @@ impl DrmSyncObj {
     }
 
     fn import_timeline_point(&self, point: u64, sync_point: Arc<DrmSyncPoint>) {
-        self.timeline.lock().insert(point, sync_point);
-        let listeners = self.timeline_available_listeners.lock().remove(&point);
-        if let Some(listeners) = listeners {
-            for eventfd in listeners {
-                signal_eventfd(&eventfd);
+        let inserted = {
+            let mut timeline = self.timeline.lock();
+            match timeline.entry(point) {
+                Entry::Occupied(existing) => {
+                    let existing = existing.get().clone();
+                    if !Arc::ptr_eq(&existing, &sync_point) {
+                        sync_point.forward_signal_to(existing);
+                    }
+                    false
+                }
+                Entry::Vacant(slot) => {
+                    slot.insert(sync_point);
+                    true
+                }
             }
+        };
+
+        if inserted {
+            let listeners = self.timeline_available_listeners.lock().remove(&point);
+            if let Some(listeners) = listeners {
+                for eventfd in listeners {
+                    signal_eventfd(&eventfd);
+                }
+            }
+        }
+    }
+
+    fn import_point(&self, point: u64, sync_point: Arc<DrmSyncPoint>) {
+        if point == 0 {
+            self.replace_binary_point(Some(sync_point));
+        } else {
+            self.import_timeline_point(point, sync_point);
         }
     }
 }
@@ -736,16 +840,25 @@ impl DrmFile {
         core::str::from_utf8(bytes).unwrap_or("").to_string()
     }
 
-    fn syncobj_deadline_to_duration(&self, timeout_nsec: u64) -> Option<Duration> {
-        if timeout_nsec == u64::MAX {
+    fn syncobj_deadline_to_duration(&self, timeout_nsec: i64) -> Option<Duration> {
+        if timeout_nsec == i64::MAX {
             return None;
+        }
+        if timeout_nsec <= 0 {
+            return Some(Duration::ZERO);
         }
 
         let now_ns = MonotonicClock::get().read_time().as_nanos() as u64;
-        Some(Duration::from_nanos(timeout_nsec.saturating_sub(now_ns)))
+        Some(Duration::from_nanos(
+            (timeout_nsec as u64).saturating_sub(now_ns),
+        ))
     }
 
-    fn gem_wait_common(&self, point: &Arc<DrmSyncPoint>, timeout: Option<Duration>) -> Result<bool> {
+    fn gem_wait_common(
+        &self,
+        point: &Arc<DrmSyncPoint>,
+        timeout: Option<Duration>,
+    ) -> Result<bool> {
         if point.is_signaled() {
             return Ok(true);
         }
@@ -765,7 +878,7 @@ impl DrmFile {
         &self,
         points: &[Arc<DrmSyncPoint>],
         wait_all: bool,
-        timeout_nsec: u64,
+        timeout_nsec: i64,
     ) -> Result<Option<u32>> {
         let first_signaled = || -> Option<u32> {
             if wait_all {
@@ -775,7 +888,10 @@ impl DrmFile {
                     None
                 }
             } else {
-                points.iter().position(|point| point.is_signaled()).map(|idx| idx as u32)
+                points
+                    .iter()
+                    .position(|point| point.is_signaled())
+                    .map(|idx| idx as u32)
             }
         };
 
@@ -801,13 +917,17 @@ impl DrmFile {
         point: u64,
         wait_for_submit: bool,
     ) -> Result<Arc<DrmSyncPoint>> {
-        match syncobj.timeline_point(point, wait_for_submit) {
+        match syncobj.point(point, wait_for_submit) {
             Some(sync_point) => Ok(sync_point),
             None => return_errno!(Errno::EINVAL),
         }
     }
 
-    fn wait_sync_point(&self, point: &Arc<DrmSyncPoint>, timeout: Option<Duration>) -> Result<bool> {
+    fn wait_sync_point(
+        &self,
+        point: &Arc<DrmSyncPoint>,
+        timeout: Option<Duration>,
+    ) -> Result<bool> {
         if point.is_signaled() {
             return Ok(true);
         }
@@ -881,8 +1001,9 @@ impl DrmFile {
             .ok_or_else(|| Error::new(Errno::EOPNOTSUPP))?;
 
         let memfd_inode = match drm_memfd.mappable()? {
-            Mappable::Inode(inode) => Arc::downcast::<MemfdInode>(inode)
-                .map_err(|_| Error::new(Errno::EOPNOTSUPP))?,
+            Mappable::Inode(inode) => {
+                Arc::downcast::<MemfdInode>(inode).map_err(|_| Error::new(Errno::EOPNOTSUPP))?
+            }
             _ => return_errno!(Errno::EOPNOTSUPP),
         };
 
@@ -911,8 +1032,9 @@ impl DrmFile {
             .ok_or_else(|| Error::new(Errno::EINVAL))?;
 
         let memfd_inode = match memfd.mappable()? {
-            Mappable::Inode(inode) => Arc::downcast::<MemfdInode>(inode)
-                .map_err(|_| Error::new(Errno::EINVAL))?,
+            Mappable::Inode(inode) => {
+                Arc::downcast::<MemfdInode>(inode).map_err(|_| Error::new(Errno::EINVAL))?
+            }
             _ => return_errno!(Errno::EINVAL),
         };
 
@@ -926,11 +1048,9 @@ impl DrmFile {
             .find(|(_, gem)| {
                 gem.downcast_ref::<DrmMemfdFile>()
                     .and_then(|drm_memfd| match drm_memfd.mappable() {
-                        Ok(Mappable::Inode(inode)) => {
-                            Arc::downcast::<MemfdInode>(inode).ok().map(|inode| {
-                                Arc::as_ptr(&inode) as usize == inode_key
-                            })
-                        }
+                        Ok(Mappable::Inode(inode)) => Arc::downcast::<MemfdInode>(inode)
+                            .ok()
+                            .map(|inode| Arc::as_ptr(&inode) as usize == inode_key),
                         _ => None,
                     })
                     .unwrap_or(false)
@@ -965,22 +1085,24 @@ impl DrmFile {
 
         let value = match param {
             virtio_gpu_drm::VIRTGPU_PARAM_3D_FEATURES => u64::from(virtio_gpu.has_virgl_3d()),
-            virtio_gpu_drm::VIRTGPU_PARAM_CAPSET_QUERY_FIX => {
-                u64::from(virtio_gpu.num_capsets() > 0)
-            }
+            // Linux reports CAPSET_QUERY_FIX as supported unconditionally.
+            virtio_gpu_drm::VIRTGPU_PARAM_CAPSET_QUERY_FIX => 1,
             virtio_gpu_drm::VIRTGPU_PARAM_RESOURCE_BLOB => {
                 u64::from(virtio_gpu.has_resource_blob())
             }
-            virtio_gpu_drm::VIRTGPU_PARAM_HOST_VISIBLE => 0,
-            virtio_gpu_drm::VIRTGPU_PARAM_CROSS_DEVICE => 0,
-            virtio_gpu_drm::VIRTGPU_PARAM_CONTEXT_INIT => {
-                u64::from(virtio_gpu.has_context_init() && virtio_gpu.has_virgl_3d())
+            virtio_gpu_drm::VIRTGPU_PARAM_HOST_VISIBLE => u64::from(virtio_gpu.has_host_visible()),
+            virtio_gpu_drm::VIRTGPU_PARAM_GUEST_VRAM => {
+                u64::from(!virtio_gpu.has_host_visible() && virtio_gpu.has_resource_blob())
             }
+            virtio_gpu_drm::VIRTGPU_PARAM_CROSS_DEVICE => {
+                u64::from(virtio_gpu.has_resource_assign_uuid())
+            }
+            virtio_gpu_drm::VIRTGPU_PARAM_CONTEXT_INIT => u64::from(virtio_gpu.has_context_init()),
             virtio_gpu_drm::VIRTGPU_PARAM_SUPPORTED_CAPSET_IDS => {
                 self.virtio_gpu_supported_capset_mask(&virtio_gpu)
             }
             virtio_gpu_drm::VIRTGPU_PARAM_EXPLICIT_DEBUG_NAME => {
-                u64::from(virtio_gpu.has_context_init() && virtio_gpu.has_virgl_3d())
+                u64::from(virtio_gpu.has_context_init())
             }
             _ => {
                 return_errno!(Errno::EINVAL);
@@ -1038,37 +1160,16 @@ impl DrmFile {
     }
 
     fn virtio_gpu_supported_capset_mask(&self, virtio_gpu: &VirtioGpuDevice) -> u64 {
-        virtio_gpu.capset_infos().into_iter().fold(0u64, |supported, capset| {
-            if capset.capset_id < u64::BITS {
-                supported | (1u64 << capset.capset_id)
-            } else {
-                supported
-            }
-        })
-    }
-
-    fn read_user_cstring<const N: usize>(&self, ptr: u64) -> Result<([u8; N], usize)> {
-        if ptr == 0 {
-            return_errno!(Errno::EFAULT);
-        }
-
-        let mut out = [0u8; N];
-        let mut len = 0usize;
-        while len + 1 < N {
-            let byte: u8 = current_userspace!().read_val(ptr as usize + len)?;
-            if byte == 0 {
-                return Ok((out, len));
-            }
-            out[len] = byte;
-            len += 1;
-        }
-
-        let terminator: u8 = current_userspace!().read_val(ptr as usize + len)?;
-        if terminator != 0 {
-            return_errno!(Errno::EINVAL);
-        }
-
-        Ok((out, len))
+        virtio_gpu
+            .capset_infos()
+            .into_iter()
+            .fold(0u64, |supported, capset| {
+                if capset.capset_id < u64::BITS {
+                    supported | (1u64 << capset.capset_id)
+                } else {
+                    supported
+                }
+            })
     }
 
     fn ensure_virtio_gpu_context(&self, virtio_gpu: &Arc<VirtioGpuDevice>) -> Result<u32> {
@@ -1131,7 +1232,9 @@ impl DrmFile {
             return_errno!(Errno::EINVAL);
         }
 
-        Ok(Some(u8::try_from(ring_idx).map_err(|_| Error::new(Errno::EINVAL))?))
+        Ok(Some(
+            u8::try_from(ring_idx).map_err(|_| Error::new(Errno::EINVAL))?,
+        ))
     }
 
     fn virtio_gpu_capset_info(
@@ -1156,27 +1259,15 @@ impl DrmFile {
     }
 
     fn close_gem_handle(&self, handle: u32) -> Result<()> {
-        let driver = self.device.driver();
-        let driver_name = driver.name();
-
         let Some(gem_obj) = self.remove_gem(&handle) else {
             return_errno!(Errno::ENOENT);
         };
 
-        // Keep virtio resource lifetime in sync with GEM handle lifetime.
-        if driver_name == "virtio_gpu" {
-            if let Some(virtio_gpu) = self.virtio_gpu_device() {
-                if let Ok(resource_id) = virtio_gpu_obj_resource_id(&gem_obj) {
-                    let mut state = self.virtio_gpu_context.lock();
-                    if state.context_created && state.attached_resources.remove(&resource_id) {
-                        let _ = virtio_gpu.context_detach_resource(state.ctx_id, resource_id);
-                    }
-                }
-            }
-            let _ = virtio_gpu_object_unref(&gem_obj);
-        }
-
-        let _ = gem_obj.release();
+        // GEM handle close must only drop this file's handle-table reference.
+        // Userspace may still keep the object alive through an mmap or another
+        // DRM object (for example a framebuffer). Releasing the backend here can
+        // destroy the shmem/virtio resource while those references are still in
+        // use, which leads to invalid teardown and VM panics.
         self.device.remove_offset(&gem_obj);
         Ok(())
     }
@@ -1245,10 +1336,20 @@ impl FileIo for DrmFile {
 
     fn mappable_with_offset(&self, offset: usize) -> Result<Mappable> {
         if let Some(gem_obj) = self.device.lookup_offset(&(offset as u64)) {
+            if let Ok(Some(iomem)) = virtio_gpu_host_visible_mapping_by_gem(&gem_obj) {
+                return Ok(Mappable::TrackedIoMem(iomem, gem_obj));
+            }
             if let Some(drm_memfd) = gem_obj.downcast_ref::<DrmMemfdFile>() {
-                return drm_memfd.mappable();
-            } else {
-                // TODO: hardware memory mmap
+                return match drm_memfd.mappable()? {
+                    Mappable::Inode(inode) => Ok(Mappable::TrackedInode(inode, gem_obj)),
+                    Mappable::IoMem(iomem) => Ok(Mappable::TrackedIoMem(iomem, gem_obj)),
+                    Mappable::TrackedInode(inode, owner) => {
+                        Ok(Mappable::TrackedInode(inode, owner))
+                    }
+                    Mappable::TrackedIoMem(iomem, owner) => {
+                        Ok(Mappable::TrackedIoMem(iomem, owner))
+                    }
+                };
             }
         }
 
@@ -1269,12 +1370,22 @@ impl FileIo for DrmFile {
                 // correlate primary/render DRM nodes during GBM/EGL probing.
                 // We use a deterministic synthetic PCI slot per DRM index.
                 let unique = [
-                    b'p', b'c', b'i', b':',
-                    b'0', b'0', b'0', b'0', b':',
-                    b'0', b'0', b':',
+                    b'p',
+                    b'c',
+                    b'i',
+                    b':',
+                    b'0',
+                    b'0',
+                    b'0',
+                    b'0',
+                    b':',
+                    b'0',
+                    b'0',
+                    b':',
                     b'0' + ((self.device.index() / 10) % 10) as u8,
                     b'0' + (self.device.index() % 10) as u8,
-                    b'.', b'0',
+                    b'.',
+                    b'0',
                 ];
                 let full_len = unique.len() as i32;
 
@@ -1582,8 +1693,8 @@ impl FileIo for DrmFile {
                         .take(requested_connectors as usize)
                         .enumerate()
                     {
-                        let offset = user_data.connector_id_ptr as usize
-                            + i * core::mem::size_of::<u32>();
+                        let offset =
+                            user_data.connector_id_ptr as usize + i * core::mem::size_of::<u32>();
                         current_userspace!().write_val(offset, &id)?;
                     }
                 }
@@ -1609,7 +1720,11 @@ impl FileIo for DrmFile {
                 }
 
                 if user_data.fb_id_ptr != 0 {
-                    for (i, id) in res.framebuffer_id().take(requested_fbs as usize).enumerate() {
+                    for (i, id) in res
+                        .framebuffer_id()
+                        .take(requested_fbs as usize)
+                        .enumerate()
+                    {
                         let offset = user_data.fb_id_ptr as usize + i * core::mem::size_of::<u32>();
                         current_userspace!().write_val(offset, &id)?;
                     }
@@ -1971,10 +2086,8 @@ impl FileIo for DrmFile {
                         }
 
                         if user_data.enum_blob_ptr != 0 {
-                            for (i, (val, name)) in items
-                                .iter()
-                                .take(requested_enum_slots as usize)
-                                .enumerate()
+                            for (i, (val, name)) in
+                                items.iter().take(requested_enum_slots as usize).enumerate()
                             {
                                 let prop_enum = PropertyEnum::new(*val, name);
                                 let enum_offset = user_data.enum_blob_ptr as usize
@@ -2017,12 +2130,7 @@ impl FileIo for DrmFile {
                 }
 
                 let mut user_data: DrmModeGetBlob = cmd.read()?;
-                let Some(blob) = self
-                    .device
-                    .resources()
-                    .lock()
-                    .get_blob(&user_data.blob_id)
-                else {
+                let Some(blob) = self.device.resources().lock().get_blob(&user_data.blob_id) else {
                     return_errno!(Errno::ENOENT);
                 };
 
@@ -2214,10 +2322,10 @@ impl FileIo for DrmFile {
                     };
 
                     let gem_object = drm_framebuffer.gem_object();
-                    let resource_id =
-                        virtio_gpu_obj_resource_id(&gem_object).map_err(|_| Error::new(Errno::EINVAL))?;
-                    let is_dumb =
-                        virtio_gpu_is_dumb_by_gem(&gem_object).map_err(|_| Error::new(Errno::EINVAL))?;
+                    let resource_id = virtio_gpu_obj_resource_id(&gem_object)
+                        .map_err(|_| Error::new(Errno::EINVAL))?;
+                    let is_dumb = virtio_gpu_is_dumb_by_gem(&gem_object)
+                        .map_err(|_| Error::new(Errno::EINVAL))?;
 
                     let rect = aster_virtio::device::gpu::VirtioGpuRect {
                         x: 0,
@@ -2389,10 +2497,8 @@ impl FileIo for DrmFile {
                 user_data.count_format_types = format_count;
 
                 if user_data.format_type_ptr != 0 && requested_formats != 0 {
-                    current_userspace!().write_val(
-                        user_data.format_type_ptr as usize,
-                        &DRM_FORMAT_XRGB8888,
-                    )?;
+                    current_userspace!()
+                        .write_val(user_data.format_type_ptr as usize, &DRM_FORMAT_XRGB8888)?;
                 }
                 cmd.write(&user_data)?;
 
@@ -2455,18 +2561,20 @@ impl FileIo for DrmFile {
                     return_errno!(Errno::EINVAL);
                 }
 
-                let obj_ids: Vec<u32> = self.read_user_array(user_data.objs_ptr, user_data.count_objs)?;
+                let obj_ids: Vec<u32> =
+                    self.read_user_array(user_data.objs_ptr, user_data.count_objs)?;
                 let count_props: Vec<u32> =
                     self.read_user_array(user_data.count_props_ptr, user_data.count_objs)?;
 
-                let total_props = count_props.iter().try_fold(0usize, |acc, c| {
-                    acc.checked_add(*c as usize)
-                });
+                let total_props = count_props
+                    .iter()
+                    .try_fold(0usize, |acc, c| acc.checked_add(*c as usize));
                 let Some(total_props) = total_props else {
                     return_errno!(Errno::EINVAL);
                 };
 
-                let prop_ids: Vec<u32> = self.read_user_array(user_data.props_ptr, total_props as u32)?;
+                let prop_ids: Vec<u32> =
+                    self.read_user_array(user_data.props_ptr, total_props as u32)?;
                 let prop_values: Vec<u64> =
                     self.read_user_array(user_data.prop_values_ptr, total_props as u32)?;
 
@@ -2497,8 +2605,7 @@ impl FileIo for DrmFile {
                 let mut pending_crtcs: HashMap<u32, PendingCrtcState> = HashMap::new();
                 let mut pending_connectors: HashMap<u32, PendingConnectorState> = HashMap::new();
                 let mut requires_modeset = false;
-                let request_page_flip_event =
-                    (user_data.flags & DRM_MODE_PAGE_FLIP_EVENT) != 0;
+                let request_page_flip_event = (user_data.flags & DRM_MODE_PAGE_FLIP_EVENT) != 0;
 
                 {
                     let mode_config = self.device.resources().lock();
@@ -2553,10 +2660,8 @@ impl FileIo for DrmFile {
                                             .and_then(|enc_id| mode_config.get_encoder(&enc_id))
                                             .map(|enc| enc.crtc_id())
                                             .unwrap_or(0);
-                                        pending_connectors
-                                            .entry(*obj_id)
-                                            .or_default()
-                                            .crtc_id = Some(prop_value as u32);
+                                        pending_connectors.entry(*obj_id).or_default().crtc_id =
+                                            Some(prop_value as u32);
                                         if current_crtc != prop_value as u32 {
                                             requires_modeset = true;
                                         }
@@ -2578,7 +2683,8 @@ impl FileIo for DrmFile {
                                         }
                                     } else if prop_name == "MODE_ID" {
                                         let mode_id = prop_value as u32;
-                                        if mode_id != 0 && mode_config.get_blob(&mode_id).is_none() {
+                                        if mode_id != 0 && mode_config.get_blob(&mode_id).is_none()
+                                        {
                                             return_errno!(Errno::ENOENT);
                                         }
                                         pending_crtcs.entry(*obj_id).or_default().mode_id =
@@ -2596,10 +2702,8 @@ impl FileIo for DrmFile {
                                             requires_modeset = true;
                                         }
                                     } else if prop_name == "OUT_FENCE_PTR" {
-                                        pending_crtcs
-                                            .entry(*obj_id)
-                                            .or_default()
-                                            .out_fence_ptr = Some(prop_value);
+                                        pending_crtcs.entry(*obj_id).or_default().out_fence_ptr =
+                                            Some(prop_value);
                                     }
                                 }
                                 AtomicObjKind::Plane => {
@@ -2618,9 +2722,7 @@ impl FileIo for DrmFile {
                                             Some(prop_value as u32);
                                     } else if prop_name == "IN_FENCE_FD" {
                                         let pending = pending_planes.entry(*obj_id).or_default();
-                                        if prop_value == u64::MAX
-                                            || prop_value == u32::MAX as u64
-                                        {
+                                        if prop_value == u64::MAX || prop_value == u32::MAX as u64 {
                                             pending.in_fence_fd = None;
                                         } else {
                                             let Ok(in_fence_fd) = i32::try_from(prop_value) else {
@@ -2643,9 +2745,7 @@ impl FileIo for DrmFile {
                     }
 
                     // Basic Linux-like modeset gating.
-                    if requires_modeset
-                        && (user_data.flags & DRM_MODE_ATOMIC_ALLOW_MODESET) == 0
-                    {
+                    if requires_modeset && (user_data.flags & DRM_MODE_ATOMIC_ALLOW_MODESET) == 0 {
                         return_errno!(Errno::EINVAL);
                     }
 
@@ -2874,7 +2974,8 @@ impl FileIo for DrmFile {
                 Ok(0)
             }
             cmd @ DrmIoctlVirtioGpuExecbuffer => {
-                let mut user_data: aster_virtio::device::gpu::drm::VirtioGpuExecbuffer = cmd.read()?;
+                let mut user_data: aster_virtio::device::gpu::drm::VirtioGpuExecbuffer =
+                    cmd.read()?;
 
                 let Some(virtio_gpu) = self.virtio_gpu_device() else {
                     return_errno!(Errno::ENOTTY);
@@ -2890,13 +2991,12 @@ impl FileIo for DrmFile {
                     return_errno!(Errno::EINVAL);
                 }
 
-                let in_fence_fd = if (user_data.flags & virtio_gpu_drm::VIRTGPU_EXECBUF_FENCE_FD_IN)
-                    != 0
-                {
-                    Some(user_data.fence_fd)
-                } else {
-                    None
-                };
+                let in_fence_fd =
+                    if (user_data.flags & virtio_gpu_drm::VIRTGPU_EXECBUF_FENCE_FD_IN) != 0 {
+                        Some(user_data.fence_fd)
+                    } else {
+                        None
+                    };
                 let out_fence_fd_requested =
                     (user_data.flags & virtio_gpu_drm::VIRTGPU_EXECBUF_FENCE_FD_OUT) != 0;
 
@@ -2944,13 +3044,13 @@ impl FileIo for DrmFile {
                         let point = syncobj
                             .binary_point()
                             .ok_or_else(|| Error::new(Errno::EINVAL))?;
-                        let _ = self.syncobj_wait_common(&[point.clone()], true, u64::MAX)?;
+                        let _ = self.syncobj_wait_common(&[point.clone()], true, i64::MAX)?;
                         if (sync.flags & virtio_gpu_drm::VIRTGPU_EXECBUF_SYNCOBJ_RESET) != 0 {
                             syncobj.binary_reset();
                         }
                     } else {
                         let point = self.syncobj_timeline_point(&syncobj, sync.point, true)?;
-                        let _ = self.syncobj_wait_common(&[point.clone()], true, u64::MAX)?;
+                        let _ = self.syncobj_wait_common(&[point.clone()], true, i64::MAX)?;
                         if (sync.flags & virtio_gpu_drm::VIRTGPU_EXECBUF_SYNCOBJ_RESET) != 0 {
                             point.reset();
                         }
@@ -2969,8 +3069,8 @@ impl FileIo for DrmFile {
                     let gem_obj = self
                         .lookup_gem(bo_handle)
                         .ok_or_else(|| Error::new(Errno::ENOENT))?;
-                    let resource_id =
-                        virtio_gpu_obj_resource_id(&gem_obj).map_err(|_| Error::new(Errno::EINVAL))?;
+                    let resource_id = virtio_gpu_obj_resource_id(&gem_obj)
+                        .map_err(|_| Error::new(Errno::EINVAL))?;
                     self.virtio_gpu_attach_resource_locked(&virtio_gpu, &mut state, resource_id)?;
                 }
                 drop(state);
@@ -2994,7 +3094,11 @@ impl FileIo for DrmFile {
                         .lookup_syncobj(&sync.handle)
                         .ok_or_else(|| Error::new(Errno::ENOENT))?;
 
-                    let effective_point = if sync.point == 0 { fence_id } else { sync.point };
+                    let effective_point = if sync.point == 0 {
+                        fence_id
+                    } else {
+                        sync.point
+                    };
                     let point = syncobj
                         .timeline_point(effective_point, true)
                         .ok_or_else(|| Error::new(Errno::EINVAL))?;
@@ -3007,7 +3111,7 @@ impl FileIo for DrmFile {
                         syncobj.timeline.lock().insert(fence_id, point.clone());
                     }
                     if sync.point == 0 {
-                        syncobj.binary_signal();
+                        syncobj.replace_binary_point(Some(point.clone()));
                     }
                 }
 
@@ -3039,6 +3143,9 @@ impl FileIo for DrmFile {
                 }
 
                 let user_data: DrmSyncobjDestroy = cmd.read()?;
+                if user_data.pad != 0 {
+                    return_errno!(Errno::EINVAL);
+                }
                 if self.remove_syncobj(&user_data.handle).is_none() {
                     return_errno!(Errno::EINVAL);
                 }
@@ -3051,8 +3158,8 @@ impl FileIo for DrmFile {
                 }
 
                 let mut user_data: DrmSyncobjHandle = cmd.read()?;
-                let valid_flags = DRM_SYNCOBJ_HANDLE_TO_FD_FLAGS_TIMELINE |
-                                    DRM_SYNCOBJ_HANDLE_TO_FD_FLAGS_EXPORT_SYNC_FILE;
+                let valid_flags = DRM_SYNCOBJ_HANDLE_TO_FD_FLAGS_TIMELINE
+                    | DRM_SYNCOBJ_HANDLE_TO_FD_FLAGS_EXPORT_SYNC_FILE;
 
                 if user_data.pad != 0 {
                     return_errno!(Errno::EINVAL);
@@ -3104,8 +3211,8 @@ impl FileIo for DrmFile {
                 }
 
                 let mut user_data: DrmSyncobjHandle = cmd.read()?;
-                let known_flags = DRM_SYNCOBJ_FD_TO_HANDLE_FLAGS_IMPORT_SYNC_FILE |
-                    DRM_SYNCOBJ_FD_TO_HANDLE_FLAGS_TIMELINE;
+                let known_flags = DRM_SYNCOBJ_FD_TO_HANDLE_FLAGS_IMPORT_SYNC_FILE
+                    | DRM_SYNCOBJ_FD_TO_HANDLE_FLAGS_TIMELINE;
                 if user_data.pad != 0 {
                     return_errno!(Errno::EINVAL);
                 }
@@ -3128,10 +3235,7 @@ impl FileIo for DrmFile {
 
                     let imported_point = sync_file.fence().sync_point();
                     if timeline {
-                        if user_data.point == 0 {
-                            return_errno!(Errno::EINVAL);
-                        }
-                        dst_syncobj.import_timeline_point(user_data.point, imported_point);
+                        dst_syncobj.import_point(user_data.point, imported_point);
                     } else {
                         if user_data.point != 0 {
                             return_errno!(Errno::EINVAL);
@@ -3165,10 +3269,9 @@ impl FileIo for DrmFile {
                 }
 
                 let mut user_data: DrmSyncobjWait = cmd.read()?;
-                let known_flags =
-                    DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL | 
-                    DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT | 
-                    DRM_SYNCOBJ_WAIT_FLAGS_WAIT_DEADLINE;
+                let known_flags = DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL
+                    | DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT
+                    | DRM_SYNCOBJ_WAIT_FLAGS_WAIT_DEADLINE;
                 if user_data.flags & !known_flags != 0 {
                     return_errno!(Errno::EINVAL);
                 }
@@ -3183,13 +3286,15 @@ impl FileIo for DrmFile {
                 // scheduling hint via deadline_nsec. Our sync-point model has
                 // no fence-level deadline API, so timeout_nsec remains the
                 // effective wait bound.
-                let _deadline_hint = if (user_data.flags & DRM_SYNCOBJ_WAIT_FLAGS_WAIT_DEADLINE) != 0 {
-                    Some(user_data.deadline_nsec)
-                } else {
-                    None
-                };
+                let _deadline_hint =
+                    if (user_data.flags & DRM_SYNCOBJ_WAIT_FLAGS_WAIT_DEADLINE) != 0 {
+                        Some(user_data.deadline_nsec)
+                    } else {
+                        None
+                    };
 
-                let handles: Vec<u32> = self.read_user_array(user_data.handles, user_data.count_handles)?;
+                let handles: Vec<u32> =
+                    self.read_user_array(user_data.handles, user_data.count_handles)?;
                 let wait_for_submit =
                     (user_data.flags & DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT) != 0;
 
@@ -3210,7 +3315,8 @@ impl FileIo for DrmFile {
                     .collect::<Result<Vec<_>>>()?;
 
                 let wait_all = (user_data.flags & DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL) != 0;
-                let first_signaled = self.syncobj_wait_common(&points, wait_all, user_data.timeout_nsec)?;
+                let first_signaled =
+                    self.syncobj_wait_common(&points, wait_all, user_data.timeout_nsec)?;
                 let Some(index) = first_signaled else {
                     return_errno!(Errno::ETIME);
                 };
@@ -3232,7 +3338,8 @@ impl FileIo for DrmFile {
                     return_errno!(Errno::EINVAL);
                 }
 
-                let handles: Vec<u32> = self.read_user_array(user_data.handles, user_data.count_handles)?;
+                let handles: Vec<u32> =
+                    self.read_user_array(user_data.handles, user_data.count_handles)?;
                 let syncobjs = handles
                     .iter()
                     .map(|handle| {
@@ -3253,7 +3360,14 @@ impl FileIo for DrmFile {
                 }
 
                 let user_data: DrmSyncobjArray = cmd.read()?;
-                let handles: Vec<u32> = self.read_user_array(user_data.handles, user_data.count_handles)?;
+                if user_data.pad != 0 {
+                    return_errno!(Errno::EINVAL);
+                }
+                if user_data.count_handles == 0 {
+                    return_errno!(Errno::EINVAL);
+                }
+                let handles: Vec<u32> =
+                    self.read_user_array(user_data.handles, user_data.count_handles)?;
                 for handle in handles {
                     let syncobj = self
                         .lookup_syncobj(&handle)
@@ -3275,22 +3389,25 @@ impl FileIo for DrmFile {
                 let mut user_data: DrmSyncobjTimelineWait = cmd.read()?;
                 let known_flags = DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL
                     | DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT
-                    | DRM_SYNCOBJ_WAIT_FLAGS_WAIT_AVAILABLE;
+                    | DRM_SYNCOBJ_WAIT_FLAGS_WAIT_AVAILABLE
+                    | DRM_SYNCOBJ_WAIT_FLAGS_WAIT_DEADLINE;
                 if user_data.flags & !known_flags != 0 {
                     return_errno!(Errno::EINVAL);
                 }
 
-                let handles: Vec<u32> = self.read_user_array(user_data.handles, user_data.count_handles)?;
-                let points_in: Vec<u64> = self.read_user_array(user_data.points, user_data.count_handles)?;
+                let handles: Vec<u32> =
+                    self.read_user_array(user_data.handles, user_data.count_handles)?;
+                let points_in: Vec<u64> =
+                    self.read_user_array(user_data.points, user_data.count_handles)?;
                 if handles.is_empty() {
-                    return_errno!(Errno::EINVAL);
+                    cmd.write(&user_data)?;
+                    return Ok(0);
                 }
 
                 let wait_for_submit =
                     (user_data.flags & DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT) != 0;
                 let wait_all = (user_data.flags & DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL) != 0;
-                let wait_available =
-                    (user_data.flags & DRM_SYNCOBJ_WAIT_FLAGS_WAIT_AVAILABLE) != 0;
+                let wait_available = (user_data.flags & DRM_SYNCOBJ_WAIT_FLAGS_WAIT_AVAILABLE) != 0;
 
                 let first_signaled = if wait_available {
                     let entries = handles
@@ -3308,7 +3425,7 @@ impl FileIo for DrmFile {
                         if wait_all {
                             if entries
                                 .iter()
-                                .all(|(syncobj, point)| syncobj.has_timeline_point(*point))
+                                .all(|(syncobj, point)| syncobj.has_point(*point))
                             {
                                 Some(0)
                             } else {
@@ -3317,7 +3434,7 @@ impl FileIo for DrmFile {
                         } else {
                             entries
                                 .iter()
-                                .position(|(syncobj, point)| syncobj.has_timeline_point(*point))
+                                .position(|(syncobj, point)| syncobj.has_point(*point))
                                 .map(|idx| idx as u32)
                         }
                     };
@@ -3349,7 +3466,9 @@ impl FileIo for DrmFile {
                     self.syncobj_wait_common(&points, wait_all, user_data.timeout_nsec)?
                 };
 
-                let Some(index) = first_signaled else { return_errno!(Errno::ETIME); };
+                let Some(index) = first_signaled else {
+                    return_errno!(Errno::ETIME);
+                };
 
                 user_data.first_signaled = index;
                 cmd.write(&user_data)?;
@@ -3364,14 +3483,26 @@ impl FileIo for DrmFile {
                 }
 
                 let user_data: DrmSyncobjTimelineArray = cmd.read()?;
-                let handles: Vec<u32> = self.read_user_array(user_data.handles, user_data.count_handles)?;
+                if user_data.flags & !DRM_SYNCOBJ_QUERY_FLAGS_LAST_SUBMITTED != 0 {
+                    return_errno!(Errno::EINVAL);
+                }
+                if user_data.count_handles == 0 {
+                    return_errno!(Errno::EINVAL);
+                }
+                let handles: Vec<u32> =
+                    self.read_user_array(user_data.handles, user_data.count_handles)?;
                 let mut out_points: Vec<u64> = Vec::with_capacity(handles.len());
 
                 for handle in handles {
                     let syncobj = self
                         .lookup_syncobj(&handle)
                         .ok_or_else(|| Error::new(Errno::ENOENT))?;
-                    out_points.push(syncobj.highest_signaled_point());
+                    let point = if (user_data.flags & DRM_SYNCOBJ_QUERY_FLAGS_LAST_SUBMITTED) != 0 {
+                        syncobj.highest_submitted_point()
+                    } else {
+                        syncobj.highest_signaled_point()
+                    };
+                    out_points.push(point);
                 }
 
                 self.write_user_array::<u64>(user_data.points, out_points.as_slice())?;
@@ -3386,7 +3517,10 @@ impl FileIo for DrmFile {
                 }
 
                 let user_data: DrmSyncobjTransfer = cmd.read()?;
-                if user_data.flags != 0 {
+                if user_data.pad != 0 {
+                    return_errno!(Errno::EINVAL);
+                }
+                if user_data.flags & !DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT != 0 {
                     return_errno!(Errno::EINVAL);
                 }
 
@@ -3397,13 +3531,15 @@ impl FileIo for DrmFile {
                     .lookup_syncobj(&user_data.dst_handle)
                     .ok_or_else(|| Error::new(Errno::ENOENT))?;
 
-                let src_point = src_syncobj
-                    .timeline_point(user_data.src_point, false)
-                    .ok_or_else(|| Error::new(Errno::EINVAL))?;
-                dst_syncobj
-                    .timeline
-                    .lock()
-                    .insert(user_data.dst_point, src_point);
+                let wait_for_submit =
+                    (user_data.flags & DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT) != 0;
+                let src_point = self.syncobj_timeline_point(
+                    &src_syncobj,
+                    user_data.src_point,
+                    wait_for_submit,
+                )?;
+                dst_syncobj.import_point(user_data.dst_point, src_point);
+                self.syncobj_wait_queue.wake_all();
 
                 Ok(0)
             }
@@ -3416,24 +3552,36 @@ impl FileIo for DrmFile {
                 }
 
                 let user_data: DrmSyncobjTimelineArray = cmd.read()?;
-                let handles: Vec<u32> = self.read_user_array(user_data.handles, user_data.count_handles)?;
-                let points_in: Vec<u64> = self.read_user_array(user_data.points, user_data.count_handles)?;
+                if user_data.flags != 0 {
+                    return_errno!(Errno::EINVAL);
+                }
+                if user_data.count_handles == 0 {
+                    return_errno!(Errno::EINVAL);
+                }
+                let handles: Vec<u32> =
+                    self.read_user_array(user_data.handles, user_data.count_handles)?;
+                let points_in: Vec<u64> =
+                    self.read_user_array(user_data.points, user_data.count_handles)?;
 
                 for (handle, point) in handles.iter().zip(points_in.iter()) {
                     let syncobj = self
                         .lookup_syncobj(handle)
                         .ok_or_else(|| Error::new(Errno::ENOENT))?;
-                    let sync_point = syncobj
-                        .timeline_point(*point, true)
-                        .ok_or_else(|| Error::new(Errno::EINVAL))?;
-                    sync_point.signal();
+                    if *point == 0 {
+                        syncobj.binary_signal();
+                    } else {
+                        syncobj.import_timeline_point(*point, Arc::new(DrmSyncPoint::new(true)));
+                    }
                 }
                 self.syncobj_wait_queue.wake_all();
 
                 Ok(0)
             }
             cmd @ DrmIoctlSyncobjEventfd => {
-                if !self.device.check_feature(DrmDriverFeatures::SYNCOBJ) {
+                if !self
+                    .device
+                    .check_feature(DrmDriverFeatures::SYNCOBJ_TIMELINE)
+                {
                     return_errno!(Errno::EOPNOTSUPP);
                 }
 
@@ -3442,17 +3590,19 @@ impl FileIo for DrmFile {
                 if user_data.flags & !known_flags != 0 {
                     return_errno!(Errno::EINVAL);
                 }
+                if user_data.pad != 0 {
+                    return_errno!(Errno::EINVAL);
+                }
 
                 let syncobj = self
                     .lookup_syncobj(&user_data.handle)
                     .ok_or_else(|| Error::new(Errno::ENOENT))?;
                 let eventfd = self.current_file_by_fd(user_data.fd)?;
 
-                let wait_available =
-                    (user_data.flags & DRM_SYNCOBJ_WAIT_FLAGS_WAIT_AVAILABLE) != 0;
+                let wait_available = (user_data.flags & DRM_SYNCOBJ_WAIT_FLAGS_WAIT_AVAILABLE) != 0;
                 if wait_available {
                     if user_data.point == 0 {
-                        signal_eventfd(&eventfd);
+                        syncobj.register_binary_available_eventfd(eventfd);
                     } else {
                         syncobj.register_timeline_available_eventfd(user_data.point, eventfd);
                     }
@@ -3460,10 +3610,7 @@ impl FileIo for DrmFile {
                 }
 
                 if user_data.point == 0 {
-                    syncobj
-                        .binary_point()
-                        .ok_or_else(|| Error::new(Errno::EINVAL))?
-                        .register_eventfd(eventfd);
+                    syncobj.binary_point_or_create().register_eventfd(eventfd);
                 } else {
                     let point = syncobj
                         .timeline_point(user_data.point, true)
@@ -3475,7 +3622,6 @@ impl FileIo for DrmFile {
             }
             cmd @ DrmIoctlVirtioGpuGetParam => {
                 let mut user_data = cmd.read()?;
-
                 let value = match self.virtio_gpu_param_value(user_data.param)? {
                     Some(value) => value,
                     None => {
@@ -3488,6 +3634,7 @@ impl FileIo for DrmFile {
                 }
                 current_userspace!().write_val(user_data.value as usize, &value)?;
                 cmd.write(&user_data)?;
+
                 Ok(0)
             }
             cmd @ DrmIoctlVirtioGpuResourceCreate => {
@@ -3555,8 +3702,8 @@ impl FileIo for DrmFile {
                 // Linux allocates and attaches a fence to resource creation.
                 // Our create path is synchronous, but we still capture and consume
                 // the virtio fence metadata for parity with that model.
-                let create_hdr =
-                    virtio_gpu_create_hdr_by_gem(&gem_obj).map_err(|_| Error::new(Errno::EINVAL))?;
+                let create_hdr = virtio_gpu_create_hdr_by_gem(&gem_obj)
+                    .map_err(|_| Error::new(Errno::EINVAL))?;
                 if create_hdr.fence_id == 0 {
                     return_errno!(Errno::EIO);
                 }
@@ -3592,8 +3739,8 @@ impl FileIo for DrmFile {
                     return_errno!(Errno::EINVAL);
                 }
 
-                let Some(capset_info) = self
-                    .virtio_gpu_capset_info(user_data.cap_set_id, user_data.cap_set_ver)?
+                let Some(capset_info) =
+                    self.virtio_gpu_capset_info(user_data.cap_set_id, user_data.cap_set_ver)?
                 else {
                     return_errno!(Errno::EINVAL);
                 };
@@ -3632,7 +3779,9 @@ impl FileIo for DrmFile {
                 if (user_data.blob_flags & !virtio_gpu_drm::VIRTGPU_BLOB_FLAG_USE_MASK) != 0 {
                     return_errno!(Errno::EINVAL);
                 }
-                if (user_data.blob_flags & virtio_gpu_drm::VIRTGPU_BLOB_FLAG_USE_CROSS_DEVICE) != 0 {
+                if (user_data.blob_flags & virtio_gpu_drm::VIRTGPU_BLOB_FLAG_USE_CROSS_DEVICE) != 0
+                    && !virtio_gpu.has_resource_assign_uuid()
+                {
                     return_errno!(Errno::EINVAL);
                 }
 
@@ -3640,6 +3789,7 @@ impl FileIo for DrmFile {
                     virtio_gpu_drm::VIRTGPU_BLOB_MEM_GUEST => (true, false),
                     virtio_gpu_drm::VIRTGPU_BLOB_MEM_HOST3D => (false, true),
                     virtio_gpu_drm::VIRTGPU_BLOB_MEM_HOST3D_GUEST => (true, true),
+                    virtio_gpu_drm::VIRTGPU_BLOB_MEM_GUEST_VRAM => (true, false),
                     _ => return_errno!(Errno::EINVAL),
                 };
 
@@ -3651,10 +3801,6 @@ impl FileIo for DrmFile {
                         return_errno!(Errno::EINVAL);
                     }
                 } else if user_data.blob_id != 0 || user_data.cmd_size != 0 {
-                    return_errno!(Errno::EINVAL);
-                }
-
-                if !guest_blob {
                     return_errno!(Errno::EINVAL);
                 }
 
@@ -3676,11 +3822,16 @@ impl FileIo for DrmFile {
                 };
 
                 let backend = memfd_object_create("virtio-gpu-blob", user_data.size)?;
-                let sg = self.virtio_gpu_sg_from_backend(&backend)?;
+                // Linux allows HOST3D-only blobs; those are created without guest backing.
+                let sg = if guest_blob {
+                    Some(self.virtio_gpu_sg_from_backend(&backend)?)
+                } else {
+                    None
+                };
 
                 let gem_obj = virtio_gpu_blob_object_create(
                     user_data.size,
-                    Some(&sg),
+                    sg.as_ref(),
                     backend,
                     user_data.blob_mem,
                     user_data.blob_flags,
@@ -3771,9 +3922,24 @@ impl FileIo for DrmFile {
                                 return_errno!(Errno::EINVAL);
                             }
 
-                            let (debug_name, debug_name_len) =
-                                self.read_user_cstring::<VIRTGPU_DEBUG_NAME_MAX_LEN>(param.value)?;
-                            state.debug_name = debug_name;
+                            if param.value == 0 {
+                                return_errno!(Errno::EFAULT);
+                            }
+
+                            // Match Linux's strncpy_from_user(..., DEBUG_NAME_MAX_LEN - 1):
+                            // accept strings up to 64 bytes and do not require an explicit
+                            // trailing NUL from userspace.
+                            state.debug_name = [0; VIRTGPU_DEBUG_NAME_MAX_LEN];
+                            let mut debug_name_len = 0usize;
+                            while debug_name_len + 1 < VIRTGPU_DEBUG_NAME_MAX_LEN {
+                                let byte: u8 = current_userspace!()
+                                    .read_val(param.value as usize + debug_name_len)?;
+                                if byte == 0 {
+                                    break;
+                                }
+                                state.debug_name[debug_name_len] = byte;
+                                debug_name_len += 1;
+                            }
                             state.debug_name_len = debug_name_len;
                             state.explicit_debug_name = true;
                         }
@@ -3807,7 +3973,8 @@ impl FileIo for DrmFile {
                 Ok(0)
             }
             cmd @ DrmIoctlVirtioGpuResourceInfo => {
-                let mut user_data: aster_virtio::device::gpu::drm::VirtioGpuResourceInfo = cmd.read()?;
+                let mut user_data: aster_virtio::device::gpu::drm::VirtioGpuResourceInfo =
+                    cmd.read()?;
 
                 let Some(virtio_gpu) = self.virtio_gpu_device() else {
                     return_errno!(Errno::ENOTTY);
@@ -3820,7 +3987,8 @@ impl FileIo for DrmFile {
                     .ok_or_else(|| Error::new(Errno::ENOENT))?;
 
                 let size_u64 = gem_obj.size();
-                user_data.size = u32::try_from(size_u64).map_err(|_| Error::new(Errno::EOVERFLOW))?;
+                user_data.size =
+                    u32::try_from(size_u64).map_err(|_| Error::new(Errno::EOVERFLOW))?;
                 user_data.res_handle =
                     virtio_gpu_obj_resource_id(&gem_obj).map_err(|_| Error::new(Errno::EINVAL))?;
 
@@ -3835,7 +4003,8 @@ impl FileIo for DrmFile {
                 Ok(0)
             }
             cmd @ DrmIoctlVirtioGpuTransferFromHost => {
-                let user_data: aster_virtio::device::gpu::drm::VirtioGpuTransferFromHost = cmd.read()?;
+                let user_data: aster_virtio::device::gpu::drm::VirtioGpuTransferFromHost =
+                    cmd.read()?;
 
                 let Some(virtio_gpu) = self.virtio_gpu_device() else {
                     return_errno!(Errno::ENOTTY);
@@ -3849,8 +4018,8 @@ impl FileIo for DrmFile {
                     .lookup_gem(&user_data.bo_handle)
                     .ok_or_else(|| Error::new(Errno::ENOENT))?;
 
-                let (guest_blob, host3d_blob) =
-                    virtio_gpu_blob_state_by_gem(&gem_obj).map_err(|_| Error::new(Errno::EINVAL))?;
+                let (guest_blob, host3d_blob) = virtio_gpu_blob_state_by_gem(&gem_obj)
+                    .map_err(|_| Error::new(Errno::EINVAL))?;
                 if guest_blob && !host3d_blob {
                     return_errno!(Errno::EINVAL);
                 }
@@ -3897,7 +4066,8 @@ impl FileIo for DrmFile {
                 Ok(0)
             }
             cmd @ DrmIoctlVirtioGpuTransferToHost => {
-                let user_data: aster_virtio::device::gpu::drm::VirtioGpuTransferToHost = cmd.read()?;
+                let user_data: aster_virtio::device::gpu::drm::VirtioGpuTransferToHost =
+                    cmd.read()?;
 
                 let Some(virtio_gpu) = self.virtio_gpu_device() else {
                     return_errno!(Errno::ENOTTY);
@@ -3907,8 +4077,8 @@ impl FileIo for DrmFile {
                     .lookup_gem(&user_data.bo_handle)
                     .ok_or_else(|| Error::new(Errno::ENOENT))?;
 
-                let (guest_blob, host3d_blob) =
-                    virtio_gpu_blob_state_by_gem(&gem_obj).map_err(|_| Error::new(Errno::EINVAL))?;
+                let (guest_blob, host3d_blob) = virtio_gpu_blob_state_by_gem(&gem_obj)
+                    .map_err(|_| Error::new(Errno::EINVAL))?;
                 if guest_blob && !host3d_blob {
                     return_errno!(Errno::EINVAL);
                 }
@@ -4037,7 +4207,7 @@ impl Drop for DrmFile {
 
         let state = self.virtio_gpu_context.lock();
         if state.context_created {
-            let _ = virtio_gpu.context_destroy(state.ctx_id);
+            let _ = virtio_gpu.context_destroy_async(state.ctx_id);
         }
     }
 }

@@ -128,9 +128,7 @@ fn do_sys_mmap(
             // correctly service the mmap request for actual hardware.
             let rdev = file.inode().metadata().rdev;
             let device_id = DeviceId::from_encoded_u64(rdev);
-            if rdev != 0
-                && device_id.is_some_and(|d| d.major() == MajorId::new(226)) 
-            {
+            if rdev != 0 && device_id.is_some_and(|d| d.major() == MajorId::new(226)) {
                 options = options
                     .may_perms(vm_may_perms)
                     .mappable(file.mappable_with_offset(offset)?)

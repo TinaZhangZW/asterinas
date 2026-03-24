@@ -24,6 +24,10 @@ pub trait DrmGemBackend: Debug + Any + Sync + Send {
     fn release(&self) -> Result<(), DrmError>;
 }
 
+pub trait DrmGemObjectCleanup: Debug + Sync + Send {
+    fn cleanup(&self, gem: &DrmGemObject) -> Result<(), DrmError>;
+}
+
 impl dyn DrmGemBackend {
     pub fn downcast_ref<T: DrmGemBackend>(&self) -> Option<&T> {
         (self as &dyn Any).downcast_ref::<T>()
@@ -43,14 +47,25 @@ pub struct DrmGemObject {
     size: u64,
     pitch: u32,
     backend: Arc<dyn DrmGemBackend>,
+    cleanup: Option<Arc<dyn DrmGemObjectCleanup>>,
 }
 
 impl DrmGemObject {
     pub fn new(size: u64, pitch: u32, backend: Arc<dyn DrmGemBackend>) -> Self {
+        Self::with_cleanup(size, pitch, backend, None)
+    }
+
+    pub fn with_cleanup(
+        size: u64,
+        pitch: u32,
+        backend: Arc<dyn DrmGemBackend>,
+        cleanup: Option<Arc<dyn DrmGemObjectCleanup>>,
+    ) -> Self {
         Self {
             size,
             pitch,
             backend,
+            cleanup,
         }
     }
 
@@ -78,5 +93,14 @@ impl DrmGemObject {
 
     pub fn downcast_ref<T: DrmGemBackend>(&self) -> Option<&T> {
         self.backend.downcast_ref()
+    }
+}
+
+impl Drop for DrmGemObject {
+    fn drop(&mut self) {
+        if let Some(cleanup) = &self.cleanup {
+            let _ = cleanup.cleanup(self);
+        }
+        let _ = self.backend.release();
     }
 }

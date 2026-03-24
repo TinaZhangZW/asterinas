@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use alloc::{boxed::Box, sync::Arc};
+use alloc::{boxed::Box, collections::BTreeMap, sync::Arc};
 use core::fmt::Debug;
 
 use aster_pci::{
@@ -13,7 +13,7 @@ use ostd::{
     bus::BusProbeError,
     io::IoMem,
     irq::IrqCallbackFunction,
-    mm::{HasDaddr, dma::DmaCoherent},
+    mm::{HasDaddr, HasSize, dma::DmaCoherent},
 };
 
 use super::{common_cfg::VirtioPciCommonCfg, msix::VirtioMsixManager};
@@ -55,6 +55,7 @@ pub struct VirtioPciModernTransport {
     common_cfg: SafePtr<VirtioPciCommonCfg, IoMem>,
     device_cfg: VirtioPciCapabilityData,
     notify: VirtioPciNotify,
+    shm_regions: BTreeMap<u8, IoMem>,
     msix_manager: VirtioMsixManager,
 }
 
@@ -143,6 +144,14 @@ impl VirtioTransport for VirtioPciModernTransport {
 
     fn device_config_bar(&self) -> Option<(Bar, usize)> {
         None
+    }
+
+    fn has_shm_region(&self, id: u8) -> bool {
+        self.shm_regions.contains_key(&id)
+    }
+
+    fn shm_region(&self, id: u8) -> Option<IoMem> {
+        self.shm_regions.get(&id).cloned()
     }
 
     fn read_device_features(&self) -> u64 {
@@ -290,6 +299,7 @@ impl VirtioPciModernTransport {
         let mut notify = None;
         let mut common_cfg = None;
         let mut device_cfg = None;
+        let mut shm_regions = BTreeMap::new();
         for cap in common_device.capabilities().iter() {
             match cap.capability_data() {
                 CapabilityData::Vndr(vendor) => {
@@ -301,7 +311,7 @@ impl VirtioPciModernTransport {
                         VirtioPciCpabilityType::NotifyCfg => {
                             notify = Some(VirtioPciNotify {
                                 offset_multiplier: data.option_value().unwrap(),
-                                offset: data.offset(),
+                                offset: data.offset() as u32,
                                 io_memory: data.memory_bar().as_ref().unwrap().io_mem().clone(),
                             });
                         }
@@ -310,6 +320,43 @@ impl VirtioPciModernTransport {
                             device_cfg = Some(data);
                         }
                         VirtioPciCpabilityType::PciCfg => {}
+                        VirtioPciCpabilityType::SharedMemoryCfg => {
+                            if let Some(memory_bar) = data.memory_bar().as_ref() {
+                                let offset = data.offset() as usize;
+                                let length = data.length() as usize;
+                                let bar_mem = memory_bar.io_mem();
+                                let end = offset.checked_add(length);
+
+                                if length == 0 {
+                                    warn!(
+                                        "ignoring zero-length virtio shared-memory region id={} offset={:#x}",
+                                        data.id(),
+                                        offset
+                                    );
+                                } else if let Some(end) = end {
+                                    if end <= bar_mem.size() {
+                                        let region = bar_mem.slice(offset..end);
+                                        shm_regions.insert(data.id(), region);
+                                    } else {
+                                        warn!(
+                                            "ignoring out-of-range virtio shared-memory region id={} offset={:#x} len={:#x} bar_size={:#x}",
+                                            data.id(),
+                                            offset,
+                                            length,
+                                            bar_mem.size()
+                                        );
+                                    }
+                                } else {
+                                    warn!(
+                                        "ignoring overflowing virtio shared-memory region id={} offset={:#x} len={:#x}",
+                                        data.id(),
+                                        offset,
+                                        length
+                                    );
+                                }
+                            }
+                        }
+                        VirtioPciCpabilityType::VendorCfg => {}
                     }
                 }
                 CapabilityData::Msix(data) => {
@@ -334,6 +381,7 @@ impl VirtioPciModernTransport {
             common_cfg,
             device_cfg,
             notify,
+            shm_regions,
             msix_manager,
             device_type,
         })

@@ -48,6 +48,7 @@ pub const VIRTGPU_WAIT_NOWAIT: u32 = 0x01;
 pub const VIRTGPU_BLOB_MEM_GUEST: u32 = 0x0001;
 pub const VIRTGPU_BLOB_MEM_HOST3D: u32 = 0x0002;
 pub const VIRTGPU_BLOB_MEM_HOST3D_GUEST: u32 = 0x0003;
+pub const VIRTGPU_BLOB_MEM_GUEST_VRAM: u32 = 0x0004;
 
 pub const VIRTGPU_BLOB_FLAG_USE_MAPPABLE: u32 = 0x0001;
 pub const VIRTGPU_BLOB_FLAG_USE_SHAREABLE: u32 = 0x0002;
@@ -64,6 +65,7 @@ pub const VIRTGPU_PARAM_CROSS_DEVICE: u64 = 5;
 pub const VIRTGPU_PARAM_CONTEXT_INIT: u64 = 6;
 pub const VIRTGPU_PARAM_SUPPORTED_CAPSET_IDS: u64 = 7;
 pub const VIRTGPU_PARAM_EXPLICIT_DEBUG_NAME: u64 = 8;
+pub const VIRTGPU_PARAM_GUEST_VRAM: u64 = 9;
 
 pub const VIRTGPU_CONTEXT_PARAM_CAPSET_ID: u64 = 0x0001;
 pub const VIRTGPU_CONTEXT_PARAM_NUM_RINGS: u64 = 0x0002;
@@ -257,11 +259,11 @@ impl VirtioDrmDevice {
             Box::new(VirtioGpuModeConfigFuncs {}),
         );
 
+        mode_config.init_standard_properties();
+
         for scanout in 0..num_scanout {
             virtio_gpu_output_init(scanout, &mut mode_config, vgpu.clone())?;
         }
-
-        mode_config.init_standard_properties();
 
         let driver = Arc::new(VirtioGpuDrmDrvier {});
         let driver_features = driver.driver_features();

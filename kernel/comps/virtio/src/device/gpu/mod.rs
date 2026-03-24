@@ -20,6 +20,8 @@ pub(super) const RESP_OK_DISPLAY_INFO: u32 = 0x1101;
 pub(super) const RESP_OK_CAPSET_INFO: u32 = 0x1102;
 pub(super) const RESP_OK_CAPSET: u32 = 0x1103;
 pub(super) const RESP_OK_EDID: u32 = 0x1104;
+pub(super) const RESP_OK_RESOURCE_UUID: u32 = 0x1105;
+pub(super) const RESP_OK_MAP_INFO: u32 = 0x1106;
 
 pub(super) const CMD_GET_DISPLAY_INFO: u32 = 0x0100;
 pub(super) const CMD_RESOURCE_CREATE_2D: u32 = 0x0101;
@@ -42,6 +44,8 @@ pub(super) const CMD_RESOURCE_CREATE_3D: u32 = 0x0204;
 pub(super) const CMD_TRANSFER_TO_HOST_3D: u32 = 0x0205;
 pub(super) const CMD_TRANSFER_FROM_HOST_3D: u32 = 0x0206;
 pub(super) const CMD_SUBMIT_3D: u32 = 0x0207;
+pub(super) const CMD_RESOURCE_MAP_BLOB: u32 = 0x0208;
+pub(super) const CMD_RESOURCE_UNMAP_BLOB: u32 = 0x0209;
 
 bitflags! {
     /// VirtIO GPU features defined by the specification.
@@ -301,6 +305,31 @@ pub struct VirtioGpuResourceCreateBlob {
     pub nr_entries: u32,
     pub blob_id: u64,
     pub size: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, Pod)]
+#[repr(C)]
+pub struct VirtioGpuResourceMapBlob {
+    pub hdr: VirtioGpuCtrlHdr,
+    pub resource_id: u32,
+    pub padding: u32,
+    pub offset: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, Pod)]
+#[repr(C)]
+pub struct VirtioGpuRespMapInfo {
+    pub hdr: VirtioGpuCtrlHdr,
+    pub map_info: u32,
+    pub padding: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default, Pod)]
+#[repr(C)]
+pub struct VirtioGpuResourceUnmapBlob {
+    pub hdr: VirtioGpuCtrlHdr,
+    pub resource_id: u32,
+    pub padding: u32,
 }
 
 #[derive(Debug, Clone, Copy, Pod)]

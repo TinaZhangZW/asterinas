@@ -204,7 +204,7 @@ impl<'a> VmarMapOptions<'a> {
         }
 
         // Verify whether the page cache inode is valid.
-        if let Mappable::Inode(ref inode) = mappable {
+        if let Mappable::Inode(ref inode) | Mappable::TrackedInode(ref inode, _) = mappable {
             self.vmo = Some(inode.page_cache().expect("Map an inode without page cache"));
         }
 
@@ -279,7 +279,7 @@ impl<'a> VmarMapOptions<'a> {
         };
 
         // Parse the `Mappable` and prepare the `MappedMemory`.
-        let (mapped_mem, inode, io_mem) = if let Some(mappable) = mappable {
+        let (mapped_mem, inode, io_mem, mapping_owner) = if let Some(mappable) = mappable {
             // Handle the memory backed by device or page cache.
             match mappable {
                 Mappable::Inode(inode) => {
@@ -301,18 +301,41 @@ impl<'a> VmarMapOptions<'a> {
                         vmo_offset,
                         is_writable_tracked,
                     )?);
-                    (mapped_mem, Some(inode), None)
+                    (mapped_mem, Some(inode), None, None)
                 }
-                Mappable::IoMem(iomem) => (MappedMemory::Device, None, Some(iomem)),
+                Mappable::IoMem(iomem) => (MappedMemory::Device, None, Some(iomem), None),
+                Mappable::TrackedInode(inode, owner) => {
+                    let is_writable_tracked = if let Some(memfd_inode) =
+                        inode.downcast_ref::<MemfdInode>()
+                        && is_shared
+                        && may_perms.contains(VmPerms::MAY_WRITE)
+                    {
+                        memfd_inode.check_writable(perms, &mut may_perms)?;
+                        true
+                    } else {
+                        false
+                    };
+
+                    let mapped_mem = MappedMemory::Vmo(MappedVmo::new(
+                        vmo.unwrap(),
+                        vmo_offset,
+                        is_writable_tracked,
+                    )?);
+                    (mapped_mem, Some(inode), None, Some(owner))
+                }
+                Mappable::TrackedIoMem(iomem, owner) => {
+                    (MappedMemory::Device, None, Some(iomem), Some(owner))
+                }
             }
         } else if let Some(vmo) = vmo {
             (
                 MappedMemory::Vmo(MappedVmo::new(vmo, vmo_offset, false)?),
                 None,
                 None,
+                None,
             )
         } else {
-            (MappedMemory::Anonymous, None, None)
+            (MappedMemory::Anonymous, None, None, None)
         };
 
         // Build the mapping.
@@ -321,6 +344,7 @@ impl<'a> VmarMapOptions<'a> {
             map_to_addr,
             mapped_mem,
             inode,
+            mapping_owner,
             is_shared,
             handle_page_faults_around,
             perms | may_perms,

@@ -482,6 +482,7 @@ pub const DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL: u32 = 0x1;
 pub const DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT: u32 = 0x2;
 pub const DRM_SYNCOBJ_WAIT_FLAGS_WAIT_AVAILABLE: u32 = 0x4;
 pub const DRM_SYNCOBJ_WAIT_FLAGS_WAIT_DEADLINE: u32 = 0x8;
+pub const DRM_SYNCOBJ_QUERY_FLAGS_LAST_SUBMITTED: u32 = 0x1;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod)]
@@ -511,7 +512,7 @@ pub struct DrmSyncobjHandle {
 #[derive(Debug, Clone, Copy, Pod)]
 pub struct DrmSyncobjWait {
     pub handles: u64,
-    pub timeout_nsec: u64,
+    pub timeout_nsec: i64,
     pub count_handles: u32,
     pub flags: u32,
     pub first_signaled: u32,
@@ -524,11 +525,12 @@ pub struct DrmSyncobjWait {
 pub struct DrmSyncobjTimelineWait {
     pub handles: u64,
     pub points: u64,
-    pub timeout_nsec: u64,
+    pub timeout_nsec: i64,
     pub count_handles: u32,
     pub flags: u32,
     pub first_signaled: u32,
     pub pad: u32,
+    pub deadline_nsec: u64,
 }
 
 #[repr(C)]
@@ -545,7 +547,7 @@ pub struct DrmSyncobjTimelineArray {
     pub handles: u64,
     pub points: u64,
     pub count_handles: u32,
-    pub pad: u32,
+    pub flags: u32,
 }
 
 #[repr(C)]
