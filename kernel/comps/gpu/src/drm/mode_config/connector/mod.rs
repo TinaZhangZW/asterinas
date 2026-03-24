@@ -188,12 +188,7 @@ impl DrmConnector {
         self.display_info.lock().subpixel_order()
     }
 
-    pub fn update_display_info(
-        &self,
-        mm_width: u32,
-        mm_height: u32,
-        subpixel_order_bits: u32,
-    ) {
+    pub fn update_display_info(&self, mm_width: u32, mm_height: u32, subpixel_order_bits: u32) {
         let mut display_info = self.display_info.lock();
         display_info.mm_width = mm_width;
         display_info.mm_height = mm_height;

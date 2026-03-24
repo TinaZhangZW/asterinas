@@ -1,3 +1,2 @@
 #[derive(Debug, Clone, Copy)]
-pub enum ConnectorProps {
-}
+pub enum ConnectorProps {}

@@ -1,3 +1,2 @@
 #[derive(Debug, Clone, Copy)]
-pub enum FramebufferProps {
-}
+pub enum FramebufferProps {}

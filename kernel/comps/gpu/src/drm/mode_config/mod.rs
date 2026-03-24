@@ -12,8 +12,12 @@ use crate::drm::{
     DrmError,
     gem::DrmGemObject,
     mode_config::{
-        connector::DrmConnector, crtc::DrmCrtc, encoder::DrmEncoder, framebuffer::DrmFramebuffer,
-        funcs::ModeConfigFuncs, plane::DrmPlane,
+        connector::DrmConnector,
+        crtc::DrmCrtc,
+        encoder::DrmEncoder,
+        framebuffer::DrmFramebuffer,
+        funcs::ModeConfigFuncs,
+        plane::DrmPlane,
         property::{DrmModeObjectType, DrmProperty, PropertyFlags},
     },
 };
@@ -193,10 +197,30 @@ impl DrmModeConfig {
             PropertyFlags::IMMUTABLE,
             &[(0, "Overlay"), (1, "Primary"), (2, "Cursor")],
         ));
-        self.create_property(DrmProperty::create_range("SRC_X", PropertyFlags::ATOMIC, 0, u32::MAX as u64));
-        self.create_property(DrmProperty::create_range("SRC_Y", PropertyFlags::ATOMIC, 0, u32::MAX as u64));
-        self.create_property(DrmProperty::create_range("SRC_W", PropertyFlags::ATOMIC, 0, u32::MAX as u64));
-        self.create_property(DrmProperty::create_range("SRC_H", PropertyFlags::ATOMIC, 0, u32::MAX as u64));
+        self.create_property(DrmProperty::create_range(
+            "SRC_X",
+            PropertyFlags::ATOMIC,
+            0,
+            u32::MAX as u64,
+        ));
+        self.create_property(DrmProperty::create_range(
+            "SRC_Y",
+            PropertyFlags::ATOMIC,
+            0,
+            u32::MAX as u64,
+        ));
+        self.create_property(DrmProperty::create_range(
+            "SRC_W",
+            PropertyFlags::ATOMIC,
+            0,
+            u32::MAX as u64,
+        ));
+        self.create_property(DrmProperty::create_range(
+            "SRC_H",
+            PropertyFlags::ATOMIC,
+            0,
+            u32::MAX as u64,
+        ));
         self.create_property(DrmProperty::create_signed_range(
             "CRTC_X",
             PropertyFlags::ATOMIC,
@@ -209,8 +233,18 @@ impl DrmModeConfig {
             i32::MIN as i64,
             i32::MAX as i64,
         ));
-        self.create_property(DrmProperty::create_range("CRTC_W", PropertyFlags::ATOMIC, 0, i32::MAX as u64));
-        self.create_property(DrmProperty::create_range("CRTC_H", PropertyFlags::ATOMIC, 0, i32::MAX as u64));
+        self.create_property(DrmProperty::create_range(
+            "CRTC_W",
+            PropertyFlags::ATOMIC,
+            0,
+            i32::MAX as u64,
+        ));
+        self.create_property(DrmProperty::create_range(
+            "CRTC_H",
+            PropertyFlags::ATOMIC,
+            0,
+            i32::MAX as u64,
+        ));
         self.create_property(DrmProperty::create_object(
             "FB_ID",
             PropertyFlags::ATOMIC,
@@ -232,10 +266,7 @@ impl DrmModeConfig {
             "FB_DAMAGE_CLIPS",
             PropertyFlags::ATOMIC,
         ));
-        self.create_property(DrmProperty::create(
-            "IN_FORMATS",
-            PropertyFlags::IMMUTABLE,
-        ));
+        self.create_property(DrmProperty::create("IN_FORMATS", PropertyFlags::IMMUTABLE));
 
         // CRTC standard properties.
         self.create_property(DrmProperty::create_bool("ACTIVE", PropertyFlags::ATOMIC));

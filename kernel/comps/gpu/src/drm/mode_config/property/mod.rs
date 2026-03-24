@@ -131,8 +131,7 @@ impl DrmProperty {
     pub fn has_name(&self, name: &str) -> bool {
         let bytes = name.as_bytes();
         let len = bytes.len().min(DRM_PROP_NAME_LEN);
-        self.name[..len] == bytes[..len]
-            && (len == DRM_PROP_NAME_LEN || self.name[len] == 0)
+        self.name[..len] == bytes[..len] && (len == DRM_PROP_NAME_LEN || self.name[len] == 0)
     }
 
     pub fn count_values(&self) -> u32 {

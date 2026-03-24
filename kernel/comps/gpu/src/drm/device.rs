@@ -4,12 +4,14 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use hashbrown::HashMap;
 use ostd::{mm::PAGE_SIZE, sync::Mutex};
 
-use crate::drm::{
-    driver::{DrmDriver, DrmDriverFeatures},
-    gem::DrmGemObject,
-    mode_config::DrmModeConfig,
+use crate::{
+    GpuDevice,
+    drm::{
+        driver::{DrmDriver, DrmDriverFeatures},
+        gem::DrmGemObject,
+        mode_config::DrmModeConfig,
+    },
 };
-use crate::GpuDevice;
 
 /// Represents a DRM device instance bound to a specific DRM driver.
 ///

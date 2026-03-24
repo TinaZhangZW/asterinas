@@ -36,7 +36,9 @@ impl StaticDirNode {
         for key in attrs.keys() {
             builder.add(Cow::Owned(key.clone()), SysPerms::DEFAULT_RO_ATTR_PERMS);
         }
-        let attr_set = builder.build().expect("failed to build sysfs attribute set");
+        let attr_set = builder
+            .build()
+            .expect("failed to build sysfs attribute set");
 
         Arc::new_cyclic(|weak_self| Self {
             fields: BranchNodeFields::new(name.into(), attr_set, weak_self.clone()),
@@ -50,7 +52,12 @@ impl StaticDirNode {
 }
 
 inherit_sys_branch_node!(StaticDirNode, fields, {
-    fn read_attr_at(&self, name: &str, offset: usize, writer: &mut VmWriter) -> SysTreeResult<usize> {
+    fn read_attr_at(
+        &self,
+        name: &str,
+        offset: usize,
+        writer: &mut VmWriter,
+    ) -> SysTreeResult<usize> {
         let attrs = self.attrs.read();
         let value = attrs.get(name).ok_or(SysTreeError::NotFound)?;
 
@@ -95,7 +102,9 @@ fn add_child_ignore_exists(parent: &Arc<StaticDirNode>, child: Arc<dyn SysObj>) 
 fn ensure_sys_dev_char_root() -> Result<&'static Arc<StaticDirNode>> {
     if SYS_DEV_ROOT.get().is_none() {
         let dev_root = StaticDirNode::new("dev", BTreeMap::new());
-        sysfs::systree_singleton().root().add_child(dev_root.clone())?;
+        sysfs::systree_singleton()
+            .root()
+            .add_child(dev_root.clone())?;
         let _ = SYS_DEV_ROOT.call_once(|| dev_root);
     }
 
@@ -113,7 +122,9 @@ fn ensure_sys_dev_char_root() -> Result<&'static Arc<StaticDirNode>> {
 fn ensure_sys_class_drm_root() -> Result<&'static Arc<StaticDirNode>> {
     if SYS_CLASS_ROOT.get().is_none() {
         let class_root = StaticDirNode::new("class", BTreeMap::new());
-        sysfs::systree_singleton().root().add_child(class_root.clone())?;
+        sysfs::systree_singleton()
+            .root()
+            .add_child(class_root.clone())?;
         let _ = SYS_CLASS_ROOT.call_once(|| class_root);
     }
 
@@ -131,10 +142,19 @@ fn ensure_sys_class_drm_root() -> Result<&'static Arc<StaticDirNode>> {
 fn default_pci_attrs(index: u32) -> BTreeMap<String, String> {
     let mut attrs = BTreeMap::new();
 
-    attrs.insert("uevent".to_string(), format!("PCI_SLOT_NAME=0000:00:{:02x}.0\n", index & 0xff));
+    attrs.insert(
+        "uevent".to_string(),
+        format!("PCI_SLOT_NAME=0000:00:{:02x}.0\n", index & 0xff),
+    );
     attrs.insert("revision".to_string(), "0x00\n".to_string());
-    attrs.insert("vendor".to_string(), format!("0x{:04x}\n", VIRTIO_VENDOR_ID));
-    attrs.insert("device".to_string(), format!("0x{:04x}\n", VIRTIO_GPU_DEVICE_ID));
+    attrs.insert(
+        "vendor".to_string(),
+        format!("0x{:04x}\n", VIRTIO_VENDOR_ID),
+    );
+    attrs.insert(
+        "device".to_string(),
+        format!("0x{:04x}\n", VIRTIO_GPU_DEVICE_ID),
+    );
     attrs.insert(
         "subsystem_vendor".to_string(),
         format!("0x{:04x}\n", VIRTIO_VENDOR_ID),

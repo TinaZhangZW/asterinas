@@ -338,7 +338,7 @@ impl FileLike for InodeHandle {
             return_errno_with_message!(Errno::ENODEV, "the file is not mappable");
         }
     }
-        
+
     fn mappable_with_offset(&self, offset: usize) -> Result<Mappable> {
         if let Some(ref file_io) = self.file_io {
             // Otherwise, it is a special file (e.g. device file) and we should
