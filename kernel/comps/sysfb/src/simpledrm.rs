@@ -38,7 +38,7 @@ pub struct SimpleDrmDevice {
 }
 
 impl SimpleDrmDevice {
-    fn new(index: u32) -> Result<Self, DrmError> {
+    fn new(index: u32, gpu_device: Arc<dyn GpuDevice>) -> Result<Self, DrmError> {
         // TODO: get the hardware format to set this properties
         let min_width = 1;
         let max_width = 8192;
@@ -90,7 +90,13 @@ impl SimpleDrmDevice {
         // and adjust per-device settings (e.g., enable/disable render node
         // or other capabilities for this specific device instance).
         let driver_features = driver.driver_features();
-        let device = Arc::new(DrmDevice::new(index, driver, driver_features, mode_config));
+        let device = Arc::new(DrmDevice::new(
+            index,
+            gpu_device,
+            driver,
+            driver_features,
+            mode_config,
+        ));
 
         Ok(Self { device })
     }
@@ -115,9 +121,9 @@ impl DrmDriver for SimpleDrmDriver {
     fn create_device(
         &self,
         index: u32,
-        _gpu_device: Arc<dyn GpuDevice>,
+        gpu_device: Arc<dyn GpuDevice>,
     ) -> Result<Arc<DrmDevice>, DrmError> {
-        let sdev = SimpleDrmDevice::new(index)?;
+        let sdev = SimpleDrmDevice::new(index, gpu_device)?;
         Ok(sdev.device.clone())
     }
 

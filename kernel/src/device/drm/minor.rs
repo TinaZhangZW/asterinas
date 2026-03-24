@@ -1,10 +1,13 @@
 use alloc::{format, sync::Arc};
 
-use aster_gpu::drm::{
-    device::DrmDevice,
-    driver::{DrmDriver, DrmDriverFeatures},
-    gem::DrmGemObject,
-    mode_config::DrmModeConfig,
+use aster_gpu::{
+    GpuDevice,
+    drm::{
+        device::DrmDevice,
+        driver::{DrmDriver, DrmDriverFeatures},
+        gem::DrmGemObject,
+        mode_config::DrmModeConfig,
+    },
 };
 use device_id::{DeviceId, MajorId, MinorId};
 
@@ -70,6 +73,10 @@ impl DrmMinor {
         self.device.driver()
     }
 
+    pub fn gpu_device(&self) -> Arc<dyn GpuDevice> {
+        self.device.gpu_device()
+    }
+
     pub fn resources(&self) -> &Mutex<DrmModeConfig> {
         &self.device.resources()
     }
@@ -110,7 +117,7 @@ impl Device for DrmMinor {
     fn devtmpfs_path(&self) -> Option<String> {
         match self.type_ {
             DrmMinorType::Primary => Some(format!("dri/card{}", self.index)),
-            DrmMinorType::Render => Some(format!("dri/render{}", RENDER_MINOR_BASE + self.index)),
+            DrmMinorType::Render => Some(format!("dri/renderD{}", RENDER_MINOR_BASE + self.index)),
             DrmMinorType::Control => Some(format!("dri/controlD{}", self.index)),
             _ => None,
         }

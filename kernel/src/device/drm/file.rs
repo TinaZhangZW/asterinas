@@ -11,13 +11,16 @@ use aster_gpu::drm::{
         property::{PropertyEnum, PropertyKind},
     },
 };
-use hashbrown::HashMap;
-use ostd::mm::{VmIo, io_util::HasVmReaderWriter, HasPaddr, HasSize};
-use crate::vm::vmo::{CommitFlags};
-use aster_virtio::device::gpu::drm::gem::{
-    VirtioGpuSgEntry, VirtioGpuSgTable, virtio_gpu_mode_dumb_create_with_sg,
-    virtio_gpu_object_unref,
+use aster_virtio::device::gpu::{
+    device::VirtioGpuDevice,
+    drm as virtio_gpu_drm,
+    drm::gem::{
+        VirtioGpuSgEntry, VirtioGpuSgTable, virtio_gpu_mode_dumb_create_with_sg,
+        virtio_gpu_object_unref,
+    },
 };
+use hashbrown::HashMap;
+use ostd::mm::{HasPaddr, HasSize, VmIo, io_util::HasVmReaderWriter};
 
 use crate::{
     current_userspace,
@@ -35,6 +38,7 @@ use crate::{
     prelude::*,
     process::signal::{PollHandle, Pollable},
     util::ioctl::{RawIoctl, dispatch_ioctl},
+    vm::vmo::CommitFlags,
 };
 
 /// Represents an open DRM file descriptor exposed to userspace.
@@ -84,6 +88,8 @@ pub(super) struct DrmFile {
     gem_table: Mutex<HashMap<u32, Arc<DrmGemObject>>>,
 }
 
+static DRM_MAGIC_ALLOC: AtomicU32 = AtomicU32::new(1);
+
 impl Pollable for DrmFile {
     fn poll(&self, mask: IoEvents, _poller: Option<&mut PollHandle>) -> IoEvents {
         let events = IoEvents::IN | IoEvents::OUT;
@@ -118,6 +124,62 @@ impl DrmFile {
 
     fn lookup_gem(&self, handle: &u32) -> Option<Arc<DrmGemObject>> {
         self.gem_table.lock().get(handle).cloned()
+    }
+
+    fn virtio_gpu_param_value(&self, param: u64) -> Result<Option<u64>> {
+        let gpu_device = self.device.gpu_device();
+        let Ok(virtio_gpu) = Arc::downcast::<VirtioGpuDevice>(gpu_device) else {
+            return Ok(None);
+        };
+
+        let value = match param {
+            virtio_gpu_drm::VIRTGPU_PARAM_3D_FEATURES => u64::from(virtio_gpu.has_virgl_3d()),
+            virtio_gpu_drm::VIRTGPU_PARAM_CAPSET_QUERY_FIX => {
+                u64::from(virtio_gpu.num_capsets() > 0)
+            }
+            virtio_gpu_drm::VIRTGPU_PARAM_RESOURCE_BLOB => {
+                u64::from(virtio_gpu.has_resource_blob())
+            }
+            virtio_gpu_drm::VIRTGPU_PARAM_HOST_VISIBLE => 0,
+            virtio_gpu_drm::VIRTGPU_PARAM_CROSS_DEVICE => 0,
+            virtio_gpu_drm::VIRTGPU_PARAM_CONTEXT_INIT => 0,
+            virtio_gpu_drm::VIRTGPU_PARAM_SUPPORTED_CAPSET_IDS => virtio_gpu
+                .capset_infos()
+                .into_iter()
+                .fold(0u64, |supported, capset| {
+                    if capset.capset_id < u64::BITS {
+                        supported | (1u64 << capset.capset_id)
+                    } else {
+                        supported
+                    }
+                }),
+            virtio_gpu_drm::VIRTGPU_PARAM_EXPLICIT_DEBUG_NAME => 0,
+            _ => {
+                return_errno!(Errno::EINVAL);
+            }
+        };
+
+        Ok(Some(value))
+    }
+
+    fn virtio_gpu_device(&self) -> Option<Arc<VirtioGpuDevice>> {
+        Arc::downcast::<VirtioGpuDevice>(self.device.gpu_device()).ok()
+    }
+
+    fn virtio_gpu_capset_info(
+        &self,
+        capset_id: u32,
+        capset_version: u32,
+    ) -> Result<Option<aster_virtio::device::gpu::VirtioGpuRespCapsetInfo>> {
+        let Some(virtio_gpu) = self.virtio_gpu_device() else {
+            return Ok(None);
+        };
+
+        let capset = virtio_gpu.capset_infos().into_iter().find(|capset| {
+            capset.capset_id == capset_id && capset_version <= capset.capset_max_version
+        });
+
+        Ok(capset)
     }
 
     fn remove_gem(&self, handle: &u32) -> Option<Arc<DrmGemObject>> {
@@ -170,6 +232,38 @@ impl FileIo for DrmFile {
         // TODO: Call GpuDevice.handle_command() if it needs device specific ioctl handling.
         // TODO: drm_file permit flags check (master, root, render ...)
         dispatch_ioctl!(match raw_ioctl {
+            cmd @ DrmIoctlGetUnique => {
+                let mut user_data: DrmUnique = cmd.read()?;
+                if user_data.unique_len < 0 {
+                    return_errno!(Errno::EINVAL);
+                }
+
+                user_data.unique_len = 0;
+                cmd.write(&user_data)?;
+                Ok(0)
+            }
+            cmd @ DrmIoctlGetMagic => {
+                let mut user_data: DrmAuth = cmd.read()?;
+                user_data.magic = DRM_MAGIC_ALLOC.fetch_add(1, Ordering::Relaxed);
+                if user_data.magic == 0 {
+                    user_data.magic = DRM_MAGIC_ALLOC.fetch_add(1, Ordering::Relaxed);
+                }
+                cmd.write(&user_data)?;
+                Ok(0)
+            }
+            cmd @ DrmIoctlSetVersion => {
+                let mut user_data: DrmSetVersion = cmd.read()?;
+                user_data.drm_di_major = 1;
+                user_data.drm_di_minor = 4;
+                user_data.drm_dd_major = -1;
+                user_data.drm_dd_minor = -1;
+                cmd.write(&user_data)?;
+                Ok(0)
+            }
+            cmd @ DrmIoctlAuthMagic => {
+                let _user_data: DrmAuth = cmd.read()?;
+                Ok(0)
+            }
             cmd @ DrmIoctlVersion => {
                 let mut user_data: DrmVersion = cmd.read()?;
 
@@ -195,6 +289,9 @@ impl FileIo for DrmFile {
                         current_userspace!()
                             .write_bytes(user_data.name as usize, name.as_bytes())?;
                     } else {
+                        if user_data.name_len == 0 {
+                            return Ok(0);
+                        }
                         return_errno!(Errno::EINVAL);
                     }
 
@@ -202,6 +299,9 @@ impl FileIo for DrmFile {
                         current_userspace!()
                             .write_bytes(user_data.desc as usize, desc.as_bytes())?;
                     } else {
+                        if user_data.desc_len == 0 {
+                            return Ok(0);
+                        }
                         return_errno!(Errno::EINVAL);
                     }
 
@@ -209,6 +309,9 @@ impl FileIo for DrmFile {
                         current_userspace!()
                             .write_bytes(user_data.date as usize, date.as_bytes())?;
                     } else {
+                        if user_data.date_len == 0 {
+                            return Ok(0);
+                        }
                         return_errno!(Errno::EINVAL);
                     }
                 }
@@ -841,8 +944,7 @@ impl FileIo for DrmFile {
                         // number of pages to traverse instead of passing the raw byte
                         // length, otherwise the iterator will iterate one entry per page
                         // index (paging units are 4KiB) which explodes the SG length.
-                        let page_count =
-                            (byte_sz + ostd::mm::PAGE_SIZE - 1) / ostd::mm::PAGE_SIZE;
+                        let page_count = (byte_sz + ostd::mm::PAGE_SIZE - 1) / ostd::mm::PAGE_SIZE;
                         // Collect physical addresses of each committed page and coalesce
                         // contiguous pages into SG entries.
                         let mut entries: alloc::vec::Vec<VirtioGpuSgEntry> = alloc::vec::Vec::new();
@@ -858,7 +960,10 @@ impl FileIo for DrmFile {
                                     continue;
                                 }
                             }
-                            entries.push(VirtioGpuSgEntry { addr: p as u64, len: s as u32 });
+                            entries.push(VirtioGpuSgEntry {
+                                addr: p as u64,
+                                len: s as u32,
+                            });
                         }
                         let sg = VirtioGpuSgTable { entries };
 
@@ -1032,6 +1137,64 @@ impl FileIo for DrmFile {
                     }
                 }
 
+                Ok(0)
+            }
+            cmd @ DrmIoctlVirtioGpuGetParam => {
+                let mut user_data = cmd.read()?;
+
+                let value = match self.virtio_gpu_param_value(user_data.param)? {
+                    Some(value) => value,
+                    None => {
+                        return_errno!(Errno::ENOTTY);
+                    }
+                };
+
+                user_data.value = value;
+                cmd.write(&user_data)?;
+                Ok(0)
+            }
+            cmd @ DrmIoctlVirtioGpuGetCaps => {
+                let mut user_data = cmd.read()?;
+
+                let Some(virtio_gpu) = self.virtio_gpu_device() else {
+                    return_errno!(Errno::ENOTTY);
+                };
+
+                // If the device reports no capsets, behave like Linux and return ENOSYS.
+                if virtio_gpu.num_capsets() == 0 {
+                    println!("virtio-gpu: device has no capsets, rejecting GET_CAPS");
+                    return_errno!(Errno::ENOSYS);
+                }
+
+                // Userspace must not pass size == 0.
+                if user_data.size == 0 {
+                    return_errno!(Errno::EINVAL);
+                }
+
+                let Some(capset_info) =
+                    self.virtio_gpu_capset_info(user_data.cap_set_id, user_data.cap_set_ver)?
+                else {
+                    return_errno!(Errno::EINVAL);
+                };
+
+                let host_caps_size = capset_info.capset_max_size;
+                let size_to_copy = core::cmp::min(user_data.size, host_caps_size) as usize;
+
+                let caps = match virtio_gpu.get_capset(
+                    capset_info.capset_id,
+                    user_data.cap_set_ver,
+                    capset_info.capset_max_size,
+                ) {
+                    Ok(v) => v,
+                    Err(_) => return_errno!(Errno::EIO),
+                };
+
+                let copy_len = core::cmp::min(size_to_copy, caps.len());
+                if copy_len > 0 {
+                    current_userspace!().write_bytes(user_data.addr as usize, &caps[..copy_len])?;
+                }
+
+                cmd.write(&user_data)?;
                 Ok(0)
             }
             _ => {

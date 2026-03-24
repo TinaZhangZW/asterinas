@@ -1,8 +1,36 @@
 use aster_gpu::drm::ioctl::*;
+use aster_virtio::device::gpu::drm::{VirtioGpuGetCaps, VirtioGpuGetParam};
+use ostd::Pod;
 
 use crate::util::ioctl::{InData, InOutData, NoData, ioc};
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod)]
+pub(super) struct DrmAuth {
+    pub magic: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod)]
+pub(super) struct DrmUnique {
+    pub unique_len: i32,
+    pub unique: u64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod)]
+pub(super) struct DrmSetVersion {
+    pub drm_di_major: i32,
+    pub drm_di_minor: i32,
+    pub drm_dd_major: i32,
+    pub drm_dd_minor: i32,
+}
+
 pub(super) type DrmIoctlVersion                 = ioc!(DRM_IOCTL_VERSION,                   b'd', 0x00, InOutData<DrmVersion>);
+pub(super) type DrmIoctlGetUnique               = ioc!(DRM_IOCTL_GET_UNIQUE,                b'd', 0x01, InOutData<DrmUnique>);
+pub(super) type DrmIoctlGetMagic                = ioc!(DRM_IOCTL_GET_MAGIC,                 b'd', 0x02, InOutData<DrmAuth>);
+pub(super) type DrmIoctlSetVersion              = ioc!(DRM_IOCTL_SET_VERSION,               b'd', 0x07, InOutData<DrmSetVersion>);
+pub(super) type DrmIoctlAuthMagic               = ioc!(DRM_IOCTL_AUTH_MAGIC,                b'd', 0x11, InData<DrmAuth>);
 pub(super) type DrmIoctlGetCap                  = ioc!(DRM_IOCTL_GET_CAP,                   b'd', 0x0c, InOutData<DrmGetCap>);
 pub(super) type DrmIoctlSetClientCap            = ioc!(DRM_IOCTL_SET_CLIENT_CAP,            b'd', 0x0d, InData<DrmSetClientCap>);
 pub(super) type DrmIoctlSetMaster               = ioc!(DRM_IOCTL_SET_MASTER,                b'd', 0x1e, NoData);
@@ -36,3 +64,5 @@ pub(super) type DrmIoctlModeGetPlaneResources   = ioc!(DRM_IOCTL_MODE_GETPLANERE
 pub(super) type DrmIoctlModeGetPlane            = ioc!(DRM_IOCTL_MODE_GETPLANE,             b'd', 0xb6, InOutData<DrmModeGetPlane>);
 pub(super) type DrmIoctlModeObjectGetProps      = ioc!(DRM_IOCTL_MODE_OBJ_GETPROPERTIES,    b'd', 0xb9, InOutData<DrmModeObjectGetProps>);
 pub(super) type DrmIoctlModeCursor2             = ioc!(DRM_IOCTL_MODE_CURSOR2,              b'd', 0xbb, InOutData<DrmModeCursor>);
+pub(super) type DrmIoctlVirtioGpuGetParam       = ioc!(DRM_IOCTL_VIRTGPU_GETPARAM,          b'd', 0x43, InOutData<VirtioGpuGetParam>);
+pub(super) type DrmIoctlVirtioGpuGetCaps        = ioc!(DRM_IOCTL_VIRTGPU_GET_CAPS,          b'd', 0x49, InOutData<VirtioGpuGetCaps>);

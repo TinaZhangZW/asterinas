@@ -18,6 +18,7 @@ pub(super) const QUEUE_CURSOR: u16 = 1;
 pub(super) const RESP_OK_NODATA: u32 = 0x1100;
 pub(super) const RESP_OK_DISPLAY_INFO: u32 = 0x1101;
 pub(super) const RESP_OK_CAPSET_INFO: u32 = 0x1102;
+pub(super) const RESP_OK_CAPSET: u32 = 0x1103;
 pub(super) const RESP_OK_EDID: u32 = 0x1104;
 
 pub(super) const CMD_GET_DISPLAY_INFO: u32 = 0x0100;
@@ -29,6 +30,7 @@ pub(super) const CMD_SET_SCANOUT: u32 = 0x0103;
 pub(super) const CMD_RESOURCE_ATTACH_BACKING: u32 = 0x0106;
 pub(super) const CMD_RESOURCE_DETACH_BACKING: u32 = 0x0107;
 pub(super) const CMD_GET_CAPSET_INFO: u32 = 0x0108;
+pub(super) const CMD_GET_CAPSET: u32 = 0x0109;
 pub(super) const CMD_GET_EDID: u32 = 0x010a;
 
 bitflags! {
@@ -132,6 +134,14 @@ pub struct VirtioGpuRespCapsetInfo {
     pub capset_max_version: u32,
     pub capset_max_size: u32,
     pub padding: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default, Pod)]
+#[repr(C)]
+pub struct VirtioGpuGetCapset {
+    pub hdr: VirtioGpuCtrlHdr,
+    pub capset_id: u32,
+    pub capset_version: u32,
 }
 
 #[derive(Debug, Clone, Copy, Default, Pod)]
